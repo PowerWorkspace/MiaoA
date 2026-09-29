@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<project ver="10" name="妙啊播放器" icon="res\logo.ico" ui="win" output="妙啊播放器.exe" CompanyName="PowerStudio" FileDescription="妙啊播放器" ProductName="妙啊播放器" dstrip="false" LegalCopyright="Copyright (C) Power 2026" InternalName="妙啊播放器" FileVersion="0.0.1.2" ProductVersion="0.0.1.2" publishDir="/Publish/">
+	<file name="main.aardio" path="main.aardio"/>
+	<folder name="forms" path="forms" embed="false" local="false" ignored="false">
+		<file name="livePlay.aardio" path="forms\livePlay.aardio" comment="forms\livePlay.aardio"/>
+		<file name="vodPlay.aardio" path="forms\vodPlay.aardio" comment="forms\vodPlay.aardio"/>
+		<file name="tvboxIndex.aardio" path="forms\tvboxIndex.aardio" comment="forms\tvboxIndex.aardio"/>
+		<file name="setting.aardio" path="forms\setting.aardio" comment="forms\setting.aardio"/>
+	</folder>
+	<folder name="controls" path="controls" embed="false" local="false" ignored="false">
+		<file name="maskLive.aardio" path="controls\maskLive.aardio" comment="controls\maskLive.aardio"/>
+		<file name="maskVod.aardio" path="controls\maskVod.aardio" comment="controls\maskVod.aardio"/>
+	</folder>
+	<folder name="res" path="res" embed="false" local="false" ignored="false">
+		<file name="logo.ico" path="res\logo.ico" comment="res\logo.ico"/>
+		<folder name="mpv" path="res\mpv" embed="false" local="false" ignored="false">
+			<file name="mpv.dll" path="res\mpv\mpv.dll" comment="res\mpv\mpv.dll"/>
+		</folder>
+	</folder>
+</project>

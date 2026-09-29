@@ -1,0 +1,188 @@
+//main.aardio  播放器主程序（首页）
+//功能：IP定位+天气（异步）、实时时钟（秒刷新）
+//      【直播】按钮 + 5个点播源按钮；左键进入对应播放，右键呼出设置
+//运行：在 aardio IDE 中打开本文件并运行
+import win.ui;
+
+//============== 加载用户库模块（工程 lib\ 下）：用 import 加载，发布时会自动编译打包进 exe ===============
+import configMgr;
+import m3uParser;
+import netApi;
+import tvboxApi;
+import cacheCleaner;
+import customProgramList;
+import customGridList;
+import customCateBar;
+
+//============== 加载工程代码文件（forms\ 下）：发布时作为独立 .aardio 复制到发布目录，用相对路径加载 ===============
+string.loadcode("/forms/livePlay.aardio");
+string.loadcode("/forms/vodPlay.aardio");
+string.loadcode("/forms/tvboxIndex.aardio");
+string.loadcode("/forms/setting.aardio");
+
+//建立全局别名（namespace lib 内结尾赋值不生成全局变量，此处显式绑定）
+configMgr = lib.configMgr;
+m3uParser = lib.m3uParser;
+netApi = lib.netApi;
+tvboxApi = lib.tvboxApi;
+cacheCleaner = lib.cacheCleaner;
+customProgramList = lib.customProgramList;
+customGridList = lib.customGridList;
+customCateBar = lib.customCateBar;
+
+var cfg = configMgr.load();
+
+var winform = win.form({
+	text = "直播点播播放器";
+	right = 900;
+	bottom = 560;
+	bgcolor = 0xFFFFFF;
+	min = 700;
+	max = 500;
+});
+winform.setIcon("/res/logo.ico");   //设置窗口标题栏左上角图标
+
+//============== 控件 ===============
+winform.add(
+	lbClock = { cls="static"; text="--:--:--"; left=28; top=20; right=350; bottom=120; bgcolor=0xFFFFFF; color=0x2B2B2B; font=LOGFONT(h=-72;name="微软雅黑") };
+	lbDate  = { cls="static"; text=""; left=32; top=124; right=300; bottom=155; bgcolor=0xFFFFFF; color=0x404040; font=LOGFONT(h=-22;name="微软雅黑") };
+	lbWeather = { cls="static"; text="天气加载中..."; left=410; top=62; right=850; bottom=100; bgcolor=0xFFFFFF; color=0x333333; font=LOGFONT(h=-20;name="微软雅黑") };
+
+	lbLiveTip = { cls="static"; text="【直播】"; left=28; top=200; right=200; bottom=240; transparent=1; color=0x303030; font=LOGFONT(h=-20;name="微软雅黑") };
+	btnLive1 = { cls="button"; text="直播源1"; left=28;  top=246; right=178; bottom=298; font=LOGFONT(h=-16;name="微软雅黑") };
+	btnLive2 = { cls="button"; text="直播源2"; left=194; top=246; right=344; bottom=298; font=LOGFONT(h=-16;name="微软雅黑") };
+	btnLive3 = { cls="button"; text="直播源3"; left=360; top=246; right=510; bottom=298; font=LOGFONT(h=-16;name="微软雅黑") };
+	btnLive4 = { cls="button"; text="直播源4"; left=526; top=246; right=676; bottom=298; font=LOGFONT(h=-16;name="微软雅黑") };
+	btnLive5 = { cls="button"; text="直播源5"; left=692; top=246; right=842; bottom=298; font=LOGFONT(h=-16;name="微软雅黑") };
+
+	lbVodTip = { cls="static"; text="【点播】"; left=28; top=334; right=200; bottom=370; transparent=1; color=0x303030; font=LOGFONT(h=-20;name="微软雅黑") };
+	btnVod1 = { cls="button"; text=""; left=28;  top=382; right=178; bottom=450; font=LOGFONT(h=-16;name="微软雅黑") };
+	btnVod2 = { cls="button"; text=""; left=194; top=382; right=344; bottom=450; font=LOGFONT(h=-16;name="微软雅黑") };
+	btnVod3 = { cls="button"; text=""; left=360; top=382; right=510; bottom=450; font=LOGFONT(h=-16;name="微软雅黑") };
+	btnVod4 = { cls="button"; text=""; left=526; top=382; right=676; bottom=450; font=LOGFONT(h=-16;name="微软雅黑") };
+	btnVod5 = { cls="button"; text=""; left=692; top=382; right=842; bottom=450; font=LOGFONT(h=-16;name="微软雅黑") };
+);
+
+//============== 数据状态 ===============
+winform.app = {
+	config = cfg;
+};
+
+//============== 背景绘制 ===============
+winform.onPaint = function(hdc, rcPaint, fErase, width, height){
+	import gdip;
+	var g = gdip.graphics(hdc);
+	//取窗口客户区实际尺寸（invalidate 触发的重绘不保证传入有效的 width/height，需兜底）
+	var w = width, h = height;
+	if(!w || !h){
+		w, h = win.getClientSize(winform.hwnd);
+		if(!w || !h){ w = winform.right; h = winform.bottom; }
+	}
+	//整体背景（白色，纯色，避免透明 static 文字残留）
+	var bg = gdip.solidBrush(0xFFFFFFFF);
+	g.fillRectangle(bg, 0, 0, w, h);
+	bg.delete();
+
+	//直播/点播按钮区左侧竖条装饰（浅蓝）
+	var line = gdip.solidBrush(0x994A6CF7);
+	g.fillRectangle(line, 0, 190, 4, 290);
+	line.delete();
+	g.delete();
+};
+
+//============== 时钟（秒刷新） ===============
+winform.startClock = function(){
+	winform.updateClock();
+	winform.timerClock = winform.setInterval( function(){ winform.updateClock(); }, 1000 );
+};
+winform.updateClock = function(){
+	var now = time();
+	winform.lbClock.text = string.format("%02d:%02d:%02d", now.hour, now.minute, now.second);
+	winform.lbClock.invalidate();
+	var weekNames = {"日","一","二","三","四","五","六"}; //星期数组（dayofweek 0-6，0=周日）
+	winform.lbDate.text = string.format("%d年%d月%d日 星期%s", now.year, now.month, now.day, weekNames[now.dayofweek+1] );
+	winform.lbDate.invalidate();
+};
+
+//============== 天气（异步） ===============
+//线程命令订阅：netApi.startWeather 完成后回传 onWeather
+import thread.command;
+winform.cmd = thread.command(winform);
+winform.cmd.onWeather = function(data){
+	if(data && data.temp){
+		//风向英文码 -> 中文（若已是中文则原样返回）
+		var wd = data.windDir?data.windDir:"";
+		var windCn = { ["N"]="北风"; ["S"]="南风"; ["E"]="东风"; ["W"]="西风"; ["NE"]="东北风"; ["SE"]="东南风"; ["SW"]="西南风"; ["NW"]="西北风"; ["NNE"]="东北偏北"; ["ENE"]="东北偏东"; ["ESE"]="东南偏东"; ["SSE"]="东南偏南"; ["SSW"]="西南偏南"; ["WSW"]="西南偏西"; ["WNW"]="西北偏西"; ["NNW"]="西北偏北"; ["C"]="静风" };
+		var wdCn = windCn[wd] || wd;
+		winform.lbWeather.text = (data.city?data.city:"") + "  " + data.temp + "℃  " + (data.cond?data.cond:"") +
+			 (data.province?data.province:"") + "  " + wdCn + (data.windSpeed?(" "+data.windSpeed+"公里/时"):"");
+	}
+	else{
+		winform.lbWeather.text = "天气获取失败（网络不可用）";
+	}
+	winform.lbWeather.invalidate();
+};
+
+//============== 按钮动作 ===============
+//5个直播源按钮
+var liveSources = winform.app.config.liveSource;
+for(i=1;5;1){
+	var btn = winform["btnLive" + i];
+	if(btn){
+		btn.text = liveSources[i] ? liveSources[i].name : ("直播源"+i);
+		var li = i;
+		btn.oncommand = function(id,event){
+			forms.livePlay.open( winform.app.config.liveSource[li] );
+		};
+	}
+}
+
+//5个点播源按钮
+var vodSources = winform.app.config.vodSource;
+for(i=1;5;1){
+	var btn = winform["btnVod" + i];
+	if(btn){
+		btn.text = vodSources[i] ? vodSources[i].name : ("点播源"+i);
+		var idx = i;
+		btn.oncommand = function(id,event){
+			forms.tvboxIndex.open( winform.app.config.vodSource[idx], winform.app.config );
+		};
+	}
+}
+
+//右键呼出设置
+winform.openSetting = function(){
+	forms.setting.open( winform, function(newCfg){
+		winform.app.config = newCfg;
+		winform.refreshSourceButtons();
+	});
+};
+winform.refreshSourceButtons = function(){
+	var cfg = winform.app.config;
+	for(i=1;5;1){
+		var btn = winform["btnVod" + i];
+		if(btn) btn.text = (cfg.vodSource[i] && cfg.vodSource[i].name) ? cfg.vodSource[i].name : ("点播源"+i);
+		var bl = winform["btnLive" + i];
+		if(bl) bl.text = (cfg.liveSource[i] && cfg.liveSource[i].name) ? cfg.liveSource[i].name : ("直播源"+i);
+	}
+};
+//窗口任意处右键 -> 设置
+	//窗口原生消息处理：右键弹设置（wndproc 为追加式回调，不影响默认处理）
+	winform.wndproc = {
+		[0x204/*WM_RBUTTONDOWN*/] = function(hwnd,message,wParam,lParam){ winform.openSetting(); return true; };
+		[0x205/*WM_RBUTTONUP*/] = function(hwnd,message,wParam,lParam){ winform.openSetting(); return true; };
+	};
+	//让所有子控件（按钮、提示文字等）也响应右键呼出设置（子控件默认会拦截右键消息）
+	for(k,v in winform){
+		if( type(v) == type.table && v.hwnd ){
+			v.wndproc = { [0x205/*WM_RBUTTONUP*/] = function(hwnd,message,wParam,lParam){ winform.openSetting(); return true; }; };
+		}
+	}
+
+//============== 启动 ===============
+cacheCleaner.run(); //清理启动缓存（尽力而为，失败不影响运行）
+winform.show();
+winform.startClock();
+netApi.startWeather( winform.hwnd );
+
+win.loopMessage();

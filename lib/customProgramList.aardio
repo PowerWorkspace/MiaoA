@@ -1,0 +1,218 @@
+//customProgramList.aardio  GDI自绘节目单控件
+//功能：底部节目单，半透明背景 + 白色不透明文字，滚轮滚动(无滚动条)，点击选中频道
+//样式：背景 Color(0x33000000)；文字纯白不透明；分组行加粗更大；选中行 Color(0x640078D7)
+//窗口缩放自动重绘，字号跟随窗口高度自适应
+customProgramList = {
+
+	//创建一个节目单控件实例
+	//parent:父窗口；rect: {left,top,width,height}
+	//style: 可选主题 { bgColor; textColor; headerColor; selColor }
+	//       默认深色主题（半透明黑底+白字），供直播蒙版使用；首页浅色主题可传浅色样式
+	create = function(parent, rect, style){
+		style = style || {};
+		var textColor  = style.textColor  || 0xFFFFFFFF; //白
+		var headerColor= style.headerColor|| textColor;
+		var selColor   = style.selColor   || 0x640078D7;
+		var bgColor    = style.bgColor || 0x33000000; //默认半透明黑（直播蒙版用）
+
+		import win.ui;
+		var child = win.form({
+			parent = parent;
+			mode = "child";
+			exmode = "none";
+			border = "none";
+			left = rect.left;
+			top = rect.top;
+			right = rect.left + rect.width;
+			bottom = rect.top + rect.height;
+			bgcolor = 0;
+		});
+
+		var ctl = {
+			form = child;
+			groups = {};
+			rows = {};        //扁平行：{kind=0分组/1频道; text; channel}
+			scroll = 0;       //像素滚动偏移
+			selected = 1;     //当前选中频道在 rows 中的序号（-1表示未选）
+			onSelectChange = null; //function(channel){}
+			rowH = 0;
+		};
+		child.ctl = ctl;
+
+
+		//========== 绘制 ==========
+		child.onPaint = function(hdc, rcPaint, fErase, width, height){
+			import gdip;
+			var g = gdip.graphics(hdc);
+
+			//半透明黑色背景（黑色 Alpha=51，约80%透明）
+			var bg = gdip.solidBrush(bgColor);
+			g.fillRectangle(bg, 0, 0, width, height);
+			bg.delete();
+
+			var rows = child.ctl.rows;
+			if(! rows || #rows == 0){
+				var noBrush = gdip.solidBrush(textColor);
+				var noFont = gdip.font("微软雅黑", 14);
+				var noFmt = gdip.stringFormat();
+				noFmt.align = 1; noFmt.lineAlign = 1;
+				g.drawString("暂无节目", noFont, ::RECTF(0,0,width,height), noFmt, noBrush);
+				noBrush.delete(); noFont.delete(); noFmt.delete(); g.delete();
+				return;
+			}
+
+			//自适应字号
+			var headerSize = math.max( 13, height / 18 );
+			var rowSize    = math.max( 11, height / 24 );
+			var ctl2 = child.ctl;
+			ctl2.rowH = math.ceil(rowSize * 2.1);
+
+			//按滚动偏移绘制可见行
+			var top = ctl2.scroll;
+			var visibleH = height;
+			var y = - (top % ctl2.rowH); //行内对齐
+			var startRow = math.floor( top / ctl2.rowH ) + 1;
+			if(startRow < 1) startRow = 1;
+
+			var i = startRow;
+			while( y < visibleH && i <= #rows ){
+				var row = rows[i];
+				if(row.kind == 0){
+					//分组头：加粗、更大、单独一行
+					var hf = gdip.font("微软雅黑", headerSize, 1/*bold*/);
+					var hb = gdip.solidBrush(headerColor);
+					var hf2 = gdip.stringFormat();
+					hf2.align = 1; hf2.lineAlign = 1;
+					g.drawString(row.text, hf, ::RECTF(0, y, width, ctl2.rowH), hf2, hb);
+					hf.delete(); hb.delete(); hf2.delete();
+				}
+				else{
+					//选中行高亮
+					if( i == ctl2.selected ){
+						var sel = gdip.solidBrush(selColor);
+						g.fillRectangle(sel, 0, y, width, ctl2.rowH);
+						sel.delete();
+					}
+					var rf = gdip.font("微软雅黑", rowSize);
+					var rb = gdip.solidBrush(textColor);
+					var rf2 = gdip.stringFormat();
+					rf2.align = 0; rf2.lineAlign = 1;
+					//留出左右边距
+					g.drawString(row.text, rf, ::RECTF(8, y, width-16, ctl2.rowH), rf2, rb);
+					rf.delete(); rb.delete(); rf2.delete();
+				}
+				y += ctl2.rowH;
+				i += 1;
+			}
+
+			g.delete();
+		};
+
+		//========== 滚轮滚动 / 点击 / 右键（表形式 wndproc 原生消息） ==========
+		child.wndproc = {
+			[0x020A/*WM_MOUSEWHEEL*/] = function(hwnd,message,wParam,lParam){
+				var ctl2 = child.ctl;
+				if(#ctl2.rows == 0) return 0;
+				var d = (wParam >> 16) & 0xFFFF;
+				if(d >= 0x8000) d = d - 0x10000;
+				var clientH = (child.getClientRect().bottom - child.getClientRect().top) || 0;
+				var maxScroll = math.max(0, #ctl2.rows * ctl2.rowH - clientH );
+				var step = d > 0 ? - ctl2.rowH * 3 : ctl2.rowH * 3;
+				ctl2.scroll = ctl2.scroll + step;
+				if(ctl2.scroll < 0) ctl2.scroll = 0;
+				if(ctl2.scroll > maxScroll) ctl2.scroll = maxScroll;
+				child.invalidate();
+				return 0;
+			};
+			[0x201/*WM_LBUTTONDOWN*/] = function(hwnd,message,wParam,lParam){
+				//点击切换统一由 livePlay 的低级鼠标钩子处理（本控件在此环境的命中点击不可靠，
+				//且与钩子会重复触发）；此处不再处理点击，仅阻止默认行为。
+				return true;
+			};
+			[0x205/*WM_RBUTTONUP*/] = function(hwnd,message,wParam,lParam){
+				if( child.ctl.onRightClick ) child.ctl.onRightClick();
+				return true;
+			};
+		};
+
+		//========== 窗口缩放时重绘 ==========
+		child.onMoveForm = function(){
+			child.invalidate();
+		};
+
+		child.setPos = function(x,y,width,height){
+			child.setRect({left=x;top=y;right=x+width;bottom=y+height});
+			child.invalidate();
+		};
+
+		//========== 对外方法 ==========
+		//滚轮滚动（由父窗口捕获 WM_MOUSEWHEEL 后调用；delta 为 ±120 增量）
+		ctl.doScroll = function(delta){
+			var ctl2 = child.ctl;
+			if(#ctl2.rows == 0) return;
+			var clientH = (child.getClientRect().bottom - child.getClientRect().top) || 0;
+			var maxScroll = math.max(0, #ctl2.rows * ctl2.rowH - clientH );
+			var step = delta > 0 ? - ctl2.rowH * 3 : ctl2.rowH * 3;
+			ctl2.scroll = ctl2.scroll + step;
+			if(ctl2.scroll < 0) ctl2.scroll = 0;
+			if(ctl2.scroll > maxScroll) ctl2.scroll = maxScroll;
+			child.invalidate();
+		};
+		//点击命中行（由父窗口捕获 WM_LBUTTONDOWN 后调用；x,y 为节目单客户区坐标）
+		ctl.doClick = function(x, y){
+			var ctl2 = child.ctl;
+			if(#ctl2.rows == 0) return;
+			var row = math.floor( (ctl2.scroll + y) / ctl2.rowH ) + 1;
+			if(row < 1 || row > #ctl2.rows) return;
+			var r = ctl2.rows[row];
+			if(r.kind == 1){
+				ctl2.selected = row;
+				child.invalidate();
+				if( ctl2.onSelectChange ) ctl2.onSelectChange( r.channel, r.text );
+			}
+			else if(r.kind == 0 && r.gid !== undefined){
+				if( ctl2.onSelectChange ) ctl2.onSelectChange( null, r.text, r.gid );
+			}
+		};
+
+		ctl.setData = function(groups){
+			child.ctl.groups = groups || {};
+			var rows = {};
+			for(i=1;#child.ctl.groups;1){
+				var grp = child.ctl.groups[i];
+				if(!grp || !grp.name) continue;
+				..table.push(rows, { kind = 0; text = grp.name; channel = null; gid = grp.gid });
+				if(grp.channels){
+					for(j=1;#grp.channels;1){
+						..table.push(rows, { kind = 1; text = grp.channels[j].name; channel = grp.channels[j] });
+					}
+				}
+			}
+			child.ctl.rows = rows;
+			child.ctl.scroll = 0;
+			child.invalidate();
+		};
+
+		//选中某一行（行号），并滚动到可见
+		ctl.selectIndex = function(idx){
+			child.ctl.selected = idx;
+			var rowH = child.ctl.rowH || 20;
+			var clientH = (child.getClientRect().bottom - child.getClientRect().top) || 0;
+			var need = (idx-1) * rowH;
+			var maxScroll = math.max(0, #child.ctl.rows * rowH - clientH );
+			if( need < child.ctl.scroll ) child.ctl.scroll = need;
+			elseif( need + rowH > child.ctl.scroll + clientH ) child.ctl.scroll = math.min(maxScroll, need + rowH - clientH);
+			if(child.ctl.scroll<0) child.ctl.scroll=0;
+			child.invalidate();
+		};
+
+		ctl.show = function(){ child.show(); };
+		ctl.hide = function(){ child.hide(); };
+		ctl.destroy = function(){ child.close(); };
+
+		return ctl;
+	};
+}
+
+lib = lib or {};
+lib.customProgramList = customProgramList;

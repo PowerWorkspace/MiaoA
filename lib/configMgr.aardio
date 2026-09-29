@@ -1,0 +1,86 @@
+//configMgr.aardio  JSON配置文件读写
+//配置文件实际存储路径：%AppData%\LivePlayer\config.json
+//固定结构：2个直播源 + 5个点播源，仅允许编辑 名称/类型/接口地址
+import web.json;
+import fsys;
+
+configMgr = {
+
+	//返回配置文件完整路径（%AppData%\LivePlayer\config.json）
+	getConfigPath = function(){
+		var appdata = string.getenv("APPDATA");
+		var dir = io.fullpath(appdata + "\\LivePlayer");
+		fsys.createParentDir(dir);
+		return dir + "\\config.json";
+	};
+
+	//生成默认配置模板（5个直播源 + 5个点播源）
+	defaultConfig = function(){
+		return {
+			liveSource = {
+				{ name = "直播源1"; type = "m3u"; url = "" };
+				{ name = "直播源2"; type = "m3u"; url = "" };
+				{ name = "直播源3"; type = "m3u"; url = "" };
+				{ name = "直播源4"; type = "m3u"; url = "" };
+				{ name = "直播源5"; type = "m3u"; url = "" };
+			};
+			vodSource = {
+				{ name = "光速影视"; type = "tvbox"; url = "https://api.guangsuapi.com/api.php/provide/vod/from/gsm3u8/" };
+				{ name = "速播"; type = "tvbox"; url = "https://subocaiji.com/api.php/provide/vod/" };
+				{ name = "点播源3"; type = "tvbox"; url = "" };
+				{ name = "点播源4"; type = "tvbox"; url = "" };
+				{ name = "点播源5"; type = "tvbox"; url = "" };
+			};
+		};
+	};
+
+	//加载配置；文件不存在时生成默认模板并返回
+	load = function(){
+		var path = ..configMgr.getConfigPath();
+		if(! io.exist(path) ){
+			var cfg = ..configMgr.defaultConfig();
+			..configMgr.save(cfg);
+			return cfg;
+		}
+		var cfg = web.json.load(path);
+		if(! cfg || type(cfg) != type.table ) {
+			cfg = ..configMgr.defaultConfig();
+			..configMgr.save(cfg);
+		}
+		//确保结构完整（防止旧配置缺字段）
+		cfg = ..configMgr.normalize(cfg);
+		return cfg;
+	};
+
+	//补全/规整配置结构
+	normalize = function(cfg){
+		if(! cfg || type(cfg)!=type.table ) cfg = {};
+		if(! cfg.liveSource ) cfg.liveSource = {};
+		if(! cfg.vodSource ) cfg.vodSource = {};
+		var i;
+		for(i=1;5;1){
+			if(! cfg.liveSource[i] ) cfg.liveSource[i] = { name="直播源"+i; type="m3u"; url="" };
+			if(! cfg.liveSource[i].name ) cfg.liveSource[i].name = "直播源"+i;
+			if(! cfg.liveSource[i].type ) cfg.liveSource[i].type = "m3u";
+			if(! cfg.liveSource[i].url ) cfg.liveSource[i].url = "";
+		}
+		for(i=1;5;1){
+			if(! cfg.vodSource[i] ) cfg.vodSource[i] = { name="点播源"+i; type="tvbox"; url="" };
+			if(! cfg.vodSource[i].name ) cfg.vodSource[i].name = "点播源"+i;
+			if(! cfg.vodSource[i].type ) cfg.vodSource[i].type = "tvbox";
+			if(! cfg.vodSource[i].url ) cfg.vodSource[i].url = "";
+		}
+		return cfg;
+	};
+
+	//保存配置，写入JSON
+	save = function(cfg){
+		cfg = ..configMgr.normalize(cfg);
+		var path = ..configMgr.getConfigPath();
+		return web.json.save(path, cfg);
+	};
+}
+
+//提供简短的全局别名
+lib = lib or {};
+lib.configMgr = configMgr;

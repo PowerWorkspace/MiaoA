@@ -1,0 +1,111 @@
+//m3uParser.aardio  M3U/M3U8 解析模块
+//提取分组、频道名称、播放地址
+m3uParser = {
+
+	//解析 M3U 文本，返回 { groups=分组列表, channels=全部频道列表 }
+	//group: { name=分组名, channels={ {name,url,logo} } }
+	//channel: { name,url,logo,group }
+	parse = function(m3uText){
+		var groups = {};       //按顺序记录分组
+		var groupMap = {};     //分组名 -> 分组表
+		var allChannels = {};  //全部频道
+		var curGroup = null;   //当前分组名
+		var curName = null;    //最近 EXTINF 频道名
+		var curLogo = null;
+
+		//去BOM
+		if(m3uText && m3uText[1] == '\0xEF\0xBB\0xBF' ) m3uText = string.slice(m3uText,4);
+
+		//按换行符字面分割（正则分割在部分环境失效，改用 \n 字面分割；行尾 \r 由 trim 处理）
+		var lines = string.split(m3uText, '\n');
+		for(i=1;#lines;1){
+			var line = string.trim(lines[i]);
+			if(!line) continue;
+
+			if( string.left(line,8) == "#EXTINF:" ){
+				//解析名称（最后一个逗号后）与 group-title
+				var rest = string.slice(line,9);
+				var name = ..m3uParser.parseName(rest);
+				var grp = ..m3uParser.parseGroup(rest);
+				var logo = ..m3uParser.parseLogo(rest);
+				if(grp) curGroup = grp;
+				curName = name;
+				curLogo = logo;
+			}
+			elseif( string.left(line,7) == "#EXTGRP:" ){
+				curGroup = string.trim( string.slice(line,8) );
+			}
+			elseif( string.left(line,1) == "#" ){
+				//#EXTM3U 等，忽略
+			}
+			else{
+				//普通行 = 播放地址
+				var url = string.trim(line);
+				if(url && curName){
+					var channel = { name = curName; url = url; logo = curLogo; group = curGroup };
+					..table.push(allChannels, channel);
+
+					var g = groupMap[ curGroup ] ;
+					if(!g){
+						g = { name = curGroup; channels = {} };
+						groupMap[ curGroup ] = g;
+						..table.push(groups, g);
+					}
+					..table.push(g.channels, channel);
+
+					curName = null; //避免一条URL重复归属
+				}
+			}
+		}
+
+		return { groups = groups; channels = allChannels };
+	};
+
+	//将扁平频道列表按 group 分组，返回 { {name;channels} }
+	groupChannels = function(channels){
+		var groups = {};
+		var map = {};
+		for(i=1;#channels;1){
+			var ch = channels[i];
+			var gname = ch.group ? ch.group : "未分组";
+			var g = map[gname];
+			if(! g){
+				g = { name = gname; channels = {} };
+				map[gname] = g;
+				..table.push(groups, g);
+			}
+			..table.push(g.channels, ch);
+		}
+		return groups;
+	};
+
+	//从 EXTINF 剩余串中解析频道名：取最后一个逗号后的内容，并去掉引号
+	parseName = function(rest){
+		var p = string.lastIndexOf(rest,',');
+		if(p){
+			var name = string.trim( string.slice(rest, p+1) );
+			name = string.replace(name,'"','');
+			return name;
+		}
+		return "";
+	};
+
+	//解析 group-title="xxx"
+	parseGroup = function(rest){
+		var g = string.match(rest,`group-title=\"([^\"]+)\"`);
+		if(g) return g[1];
+		g = string.match(rest,`group-title='([^']+)'`);
+		if(g) return g[1];
+		return null;
+	};
+
+	//解析 tvg-logo="xxx"
+	parseLogo = function(rest){
+		var g = string.match(rest,`tvg-logo=\"([^\"]+)\"`);
+		if(g) return g[1];
+		return null;
+	};
+}
+
+lib = lib or {};
+lib.m3uParser = m3uParser;

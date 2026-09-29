@@ -1,0 +1,152 @@
+//tvboxApi.aardio  TVBox 标准 JSON API 封装
+//分类 / 剧集列表(含搜索) / 详情(解析播放地址)
+//所有函数在工作线程中调用（内部使用 netApi.downloadText）
+import web.json;
+
+//纯文本分隔符分割（避免 string.split 按 Lua 模式匹配，$/#/? 等特殊字符会出错）
+splitPlain = function(s, sep){
+	var r = {};
+	var sl = #s;
+	var pl = #sep;
+	if(pl == 0) return r;
+	var start = 1;
+	var i = 1;
+	while(i <= sl - pl + 1){
+		if( string.slice(s, i, i+pl-1) == sep ){
+			..table.push(r, string.slice(s, start, i-1));
+			start = i + pl;
+			i = start;
+		}
+		else{
+			i = i + 1;
+		}
+	}
+	..table.push(r, string.slice(s, start));
+	return r;
+};
+
+tvboxApi = {
+
+	//拼接查询参数
+	joinUrl = function(base, params){
+		import inet.url;
+		var sep = string.find(base,"?",1,true) ? "&" : "?";
+		var q = {};
+		for(k,v in params){
+			if(v !== null && v !== undefined && tostring(v) != "" ){
+				..table.push(q, k + "=" + ..inet.url.encode(v));
+			}
+		}
+		return base + sep + string.join(q, "&");
+	};
+
+	//获取分类列表，返回 { {id;name} } 或 null
+	getCategories = function(base){
+		var url = ..tvboxApi.joinUrl(base, { ac = "list" });
+		var json = netApi.downloadText(url, 10);
+		if(! json) return null;
+		var t = web.json.parse(json);
+		if(! t || ! t.class) return null;
+		var list = {};
+		for(i=1;#t.class;1){
+			var c = t.class[i];
+			..table.push(list, { id = c.type_id; name = c.type_name });
+		}
+		return #list > 0 ? list : null;
+	};
+
+	//获取剧集列表（cateId 与 wd 二选一），返回 { {id,name,remarks,pic,brief} } 或 null
+	getVodList = function(base, cateId, wd, page){
+		var params = { ac="videolist"; pg = page || 1 };
+		if(wd) params.wd = wd;
+		elseif(cateId) params.t = cateId;
+		var url = ..tvboxApi.joinUrl(base, params);
+		var json = netApi.downloadText(url, 12);
+		if(! json) return null;
+		var t = web.json.parse(json);
+		if(! t || ! t.list || ! t.list[1]) return null;
+		var list = {};
+		for(i=1;#t.list;1){
+			var v = t.list[i];
+			..table.push(list, { id = v.vod_id; name = v.vod_name; remarks = v.vod_remarks; pic = v.vod_pic; brief = v.vod_blurb });
+		}
+		return #list > 0 ? list : null;
+	};
+
+	//获取详情并解析播放地址，返回 { name; sources={{items={{name,url}}} } } 或 null
+	getDetail = function(base, vodId){
+		//判断 url 是否为可直接播放的媒体流（m3u8/m3u/mp4/flv）；用 string.slice 判断结尾
+		var isMedia = function(u){
+			if(! u) return false;
+			var lu = #u;
+			if(lu>=5 && string.slice(u, lu-4, lu) == ".m3u8") return true;
+			if(lu>=4 && string.slice(u, lu-3, lu) == ".m3u") return true;
+			if(lu>=4 && string.slice(u, lu-3, lu) == ".mp4") return true;
+			if(lu>=4 && string.slice(u, lu-3, lu) == ".flv") return true;
+			return false;
+		};
+		var url = ..tvboxApi.joinUrl(base, { ac="detail"; ids = vodId });
+		var json = netApi.downloadText(url, 12);
+		if(! json) return null;
+		var t = web.json.parse(json);
+		if(! t || ! t.list || ! t.list[1]) return null;
+		var v = t.list[1];
+		var playUrl = v.vod_play_url || "";
+		var sources = {};
+		try{
+			sources = ..tvboxApi.parsePlayUrl(playUrl);
+		}catch(e){
+		}
+		//后处理：HTML 播放页（非媒体 url）自动替换为其他线路同位置的媒体流，保证双击即可真实播放
+		if(sources[1] && sources[1].items){
+			var s1 = sources[1].items;
+			var ns = #sources;
+			for(a=1;#s1;1){
+				var u = s1[a] && s1[a].url;
+				if(u && ! isMedia(u)){
+					for(b=2; ns; 1){
+						var sit = sources[b].items;
+						if(sit[a] && sit[a].url && isMedia(sit[a].url)){
+							s1[a].url = sit[a].url;
+							break;
+						}
+					}
+				}
+			}
+		}
+		return { name = v.vod_name; pic = v.vod_pic; year = v.vod_year; director = v.vod_director; actor = v.vod_actor; des = v.vod_content; sources = sources };
+	};
+
+	//解析 vod_play_url 为线路/集数结构
+	//格式：线路1$集1url#集2url#..$$$线路2$集1url#...
+	parsePlayUrl = function(playUrl){
+		var sources = {};
+		if(! playUrl || #playUrl==0) return sources;
+		var blocks = splitPlain(playUrl, "$$$");
+		for(i=1;#blocks;1){
+			var block = blocks[i];
+			var items = splitPlain(block, "#");
+			var srcItems = {};
+			for(j=1;#items;1){
+				var ep = items[j];
+				if(! ep || #ep==0) continue;
+				var name, url;
+				var parts = splitPlain(ep, "$");
+				if(#parts >= 2){
+					name = parts[1];
+					url = parts[2];
+				}
+				else{
+					name = "第" + j + "集";
+					url = ep;
+				}
+				if(url) ..table.push(srcItems, { name=name; url=url });
+			}
+			if(#srcItems>0) ..table.push(sources, { items = srcItems });
+		}
+		return sources;
+	};
+}
+
+lib = lib or {};
+lib.tvboxApi = tvboxApi;

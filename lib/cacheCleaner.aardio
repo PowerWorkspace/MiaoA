@@ -1,0 +1,36 @@
+//cacheCleaner.aardio  程序启动时清理缓存
+//仅启动阶段清理 mpv 缓存目录 与 网络临时缓存；播放运行期间不清理，防止崩溃
+import fsys;
+
+cacheCleaner = {
+
+	//递归删除目录
+	removeDir = function(dir){
+		if(! io.exist(dir) ) return true;
+		fsys.remove(dir);
+		return true;
+	};
+
+	run = function(){
+		//1) mpv 缓存目录（默认 ~/.cache/mpv 或 %TEMP%\mpv）
+		var home = string.getenv("USERPROFILE");
+		..cacheCleaner.removeDir( io.fullpath(home + "\\AppData\\Local\\mpv") );
+		..cacheCleaner.removeDir( io.fullpath(home + "\\.cache\\mpv") );
+
+		//2) 网络临时缓存（WinINet 临时目录）
+		import inet;
+		try{
+			var path = inet.getCachePath();
+			if(path && io.exist(path)){
+				//只清理缓存子目录，避免误删正在使用的文件
+				..cacheCleaner.removeDir( path + "\\mpv" );
+			}
+		}catch(e){
+		}
+
+		return true;
+	};
+}
+
+lib = lib or {};
+lib.cacheCleaner = cacheCleaner;

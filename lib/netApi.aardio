@@ -1,0 +1,149 @@
+//netApi.aardio  网络接口模块
+//天气、历史上的今天、通用下载；全部异步执行，通过 thread.command 回传UI
+//所有请求在独立工作线程中执行，不阻塞UI；异常返回 null 由调用方做友好兜底
+import web.json;
+
+netApi = {
+
+	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TVBoxPlayer/1.0";
+
+	//天气描述（weatherCode）映射为中文
+	weatherTextMap = {
+		[113]="晴";[116]="多云";[119]="阴";[122]="阴";
+		[143]="雾";[176]="小雨";[179]="雷阵雨";[182]="雨夹雪";[185]="冻雨";
+		[200]="雷阵雨";[227]="小雪";[230]="暴雪";[248]="雾";
+		[260]="冻雾";[263]="小雨";[266]="小雨";[281]="冻雨";
+		[284]="冻雨";[293]="小雨";[296]="小雨";[299]="中雨";[302]="中雨";
+		[305]="大雨";[308]="大雨";[311]="冻雨";[314]="冻雨";
+		[317]="雨夹雪";[320]="雨夹雪";[323]="小雪";[326]="小雪";
+		[329]="暴雪";[332]="暴雪";[335]="暴雪";[338]="暴雪";
+		[350]="冻雨";[353]="小雨";[356]="中雨";[359]="大雨";
+		[362]="雨夹雪";[365]="雨夹雪";[368]="小雪";[371]="暴雪";
+		[374]="冻雨";[377]="雨夹雪";[386]="雷阵雨";[389]="雷阵雨";
+		[392]="雷阵雪";[395]="暴雪";
+	};
+
+	//=====================================================
+	//通用：同步下载文本（在工作线程内调用）
+	//=====================================================
+	downloadText = function(url, timeoutSec, referer){
+		import inet.http;
+		var http = inet.http(netApi.userAgent);
+		http.setTimeouts( (timeoutSec?timeoutSec:12)*1000, 8000, 8000 );
+		var headers = {["Accept"]="*/*";["Accept-Language"]="zh-CN,zh;q=0.9"};
+		if( referer ) headers["Referer"] = referer;
+		var data, err, code = http.get(url, headers);
+		http.close();
+		if( data && #data>0 ) return data;
+		return null, (err?err:"网络请求失败"), code;
+	};
+
+	//=====================================================
+	//通用：同步下载二进制（封面图等），返回原始字节字符串；在工作线程内调用
+	//=====================================================
+	downloadBinary = function(url, timeoutSec, referer){
+		import inet.http;
+		var http = inet.http(netApi.userAgent);
+		http.setTimeouts( (timeoutSec?timeoutSec:15)*1000, 8000, 8000 );
+		var headers = {["Accept"]="*/*";["Accept-Language"]="zh-CN,zh;q=0.9"};
+		if( referer ) headers["Referer"] = referer;
+		var data, err, code = http.get(url, headers);
+		http.close();
+		if( data && #data>0 ) return data;
+		return null, (err?err:"下载失败"), code;
+	};
+
+	//=====================================================
+	//IP 定位：返回 { province, city } 或 null
+	//=====================================================
+	getIPLocation = function(){
+		var json = ..netApi.downloadText("https://ip.useragentinfo.com/json", 8);
+		if(! json) return null;
+		var t = web.json.parse(json);
+		if(! t || t.code != 200) return null;
+		return { province = t.province; city = t.city; };
+	};
+
+	//=====================================================
+	//天气：传入中文城市名，返回 { city,temp,cond,wind,province } 或 null
+	//=====================================================
+	getWeather = function(city, province){
+		if(! city) return null;
+		import inet.url;
+		var url = "https://wttr.in/" + ..inet.url.encode(city) + "?format=j1&lang=zh";
+		var json = ..netApi.downloadText(url, 10);
+		if(! json) return null;
+		var t = web.json.parse(json);
+		if(! t || ! t.current_condition || ! t.current_condition[1]) return null;
+		var cc = t.current_condition[1];
+		var code = tonumber( cc.weatherCode );
+		var cond = ..netApi.weatherTextMap[ code ] ? ..netApi.weatherTextMap[ code ] : (cc.weatherDesc && cc.weatherDesc[1] ? cc.weatherDesc[1].value : "未知天气");
+		return {
+			city = city;
+			province = province;
+			temp = cc.temp_C;
+			cond = cond;
+			windDir = cc.winddir16Point;
+			windSpeed = cc.windspeedKmph;
+		};
+	};
+
+	//=====================================================
+	//历史上的今天：返回事件列表 { {year,title} } 或 null
+	//=====================================================
+	getHistory = function(){
+		var json = ..netApi.downloadText("https://api.asilu.com/today", 10);
+		if(! json) return null;
+		var t = web.json.parse(json);
+		if(! t || t.code != 200 || ! t.data) return null;
+		var list = {};
+		for(i=1;#t.data;1){
+			var it = t.data[i];
+			..table.push(list, { year = it.year; title = it.title; type = it.type });
+		}
+		return list;
+	};
+
+	//=====================================================
+	//异步：天气+定位。完成后 thread.command.post("onWeather", data)
+	//data 为天气表，失败为 null
+	//=====================================================
+	startWeather = function(hwnd){
+		thread.invoke(function(hwnd){
+			import thread.command;
+			string.loadcode("/lib/netApi.aardio");
+			netApi = lib.netApi;
+			var data = null;
+			try{
+				var loc = netApi.getIPLocation();
+				var city = loc ? loc.city : "上海";
+				data = netApi.getWeather(city, loc?loc.province:null);
+				if(data && !data.province && loc) data.province = loc.province;
+			}catch(e){
+				data = null;
+			}
+			thread.command.post("onWeather", data);
+		}, hwnd);
+	};
+
+	//=====================================================
+	//异步：历史上的今天。完成后 thread.command.post("onHistory", data)
+	//=====================================================
+	startHistory = function(hwnd){
+		thread.invoke(function(hwnd){
+			import thread.command;
+			string.loadcode("/lib/netApi.aardio");
+			netApi = lib.netApi;
+			var data = null;
+			try{
+				data = netApi.getHistory();
+			}catch(e){
+				data = null;
+			}
+			thread.command.post("onHistory", data);
+		}, hwnd);
+	};
+}
+
+lib = lib or {};
+lib.netApi = netApi;

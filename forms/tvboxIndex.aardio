@@ -1,0 +1,455 @@
+//forms/tvboxIndex.aardio  TVBox点播首页窗口（网页式网格卡片布局）
+//顶部分类导航条（customCateBar）+ 主体网格卡片（customGridList，封面+片名+简介）
+//选中剧集 -> 异步加载详情 -> 选集页（listMain 简单列表）-> 解析真实地址 -> 打开点播播放窗口
+import win.ui;
+
+tvboxIndex = {
+	lastPlayUrl = null;  //预先声明（双击/重复点击防抖，避免开多个播放窗口）
+	lastPlayTick = 0;
+
+	open = function(source, config){
+		import thread.command;
+
+		var win = win.form({
+			text = "TVBox点播 - " + (source.name?source.name:"");
+			right = 1100;
+			bottom = 700;
+			bgcolor = 0xF5F5F7;
+			min = 640;
+			max = 480;
+		});
+
+		win.add(
+			btnBack    = { cls="button"; text="返回"; left=10; top=10; right=70; bottom=40; z=1 };
+			lbTitle    = { cls="static"; text=""; left=80; top=12; right=430; bottom=38; z=2 };
+			editSearch = { cls="edit"; left=440; top=10; right=620; bottom=36; z=3 };
+			btnSearch  = { cls="button"; text="搜索"; left=625; top=10; right=695; bottom=36; z=4 };
+			btnHome    = { cls="button"; text="首页"; left=700; top=10; right=760; bottom=36; z=5 };
+			cateDrop   = { cls="combobox"; left=930; top=58; right=1070; bottom=86; z=8 };
+			//===== 选集页控件（episode 模式）=====
+			lbPoster   = { cls="static"; left=20;  top=58;  right=200;  bottom=378; z=9;  visible=false };  //左上海报（9:16 竖版）
+			lbInfo     = { cls="static"; left=220; top=58;  right=1080; bottom=210; z=10; visible=false };  //右上信息块（节目名/上映/导演/主演）
+			lbBrief    = { cls="static"; left=220; top=220; right=1080; bottom=390; z=11; visible=false };  //右下简介块
+			listMain   = { cls="listbox"; left=20; top=400; right=1080; bottom=690; db=1;dl=1;dr=1;dt=1; edge=1; z=12; visible=false };  //下方选集列表（作为播放按钮）
+		);
+
+		//主体网格卡片
+		win.grid = customGridList.create(win, { left=10; top=104; width=1080; height=560 });
+		win.grid.show();
+		//顶部分类导航条（后创建后显示，置于网格之上）
+		win.cateBar = customCateBar.create(win, { left=10; top=58; width=880; height=40 });
+		win.cateBar.show();
+		var rc1 = win.getClientRect(win.cateBar.form.hwnd);
+		var rc2 = win.getClientRect(win.grid.form.hwnd);
+
+		win.tv = {
+			source = source;
+			config = config;
+			mode = "category";      // category | vod | episode
+			categories = {};
+			vods = {};
+			detail = null;
+			curCateId = null;
+			curWd = null;
+			page = 1;
+			loadingMore = false; //分页加载进行中
+			cmd = null;
+			poster = { data = null; img = null; loading = false; url = null; };  //选集页海报缓存
+		};
+
+		//选集页海报绘制（9:16 竖版，从缓存的 gdip.image 绘制）
+		win.lbPoster.onPaint = function(hdc, rcPaint, fErase, width, height){
+			import gdip;
+			var g = gdip.graphics(hdc);
+			var bg = gdip.solidBrush(0xFF1E1E1E);
+			g.fillRectangle(bg, 0, 0, width, height);
+			bg.delete();
+			var p = win.tv.poster;
+			if(p.img && p.img.isValid){
+				g.drawImage(p.img, 0, 0, width, height);
+			}
+			else{
+				var f = gdip.font("微软雅黑", 16);
+				var fmt = gdip.stringFormat(); fmt.align=1; fmt.lineAlign=1;
+				var b = gdip.solidBrush(0xFF999999);
+				g.drawString( p.loading ? "海报加载中" : "暂无海报", f, ::RECTF(0,0,width,height), fmt, b);
+				f.delete(); fmt.delete(); b.delete();
+			}
+			g.delete();
+		};
+
+		//选集页右上信息块（节目名/上映时间/导演/主演，白底自绘多行）
+		win.lbInfo.onPaint = function(hdc, rcPaint, fErase, width, height){
+			import gdip;
+			var g = gdip.graphics(hdc);
+			var bg = gdip.solidBrush(0xFFFFFFFF);
+			g.fillRectangle(bg, 0, 0, width, height);
+			bg.delete();
+			var d = win.tv.detail;
+			if(d){
+				var info = d.name ? d.name : "";
+				if(d.year)     info = info + "\r\n上映时间：" + d.year;
+				if(d.director) info = info + "\r\n导演：" + d.director;
+				if(d.actor)    info = info + "\r\n主演：" + d.actor;
+				if(#info>0){
+					var f = gdip.font("微软雅黑", 18, 0);
+					var fmt = gdip.stringFormat(); fmt.align=0; fmt.lineAlign=0; fmt.trimming=3;
+					var b = gdip.solidBrush(0xFF111111);
+					g.drawString(info, f, ::RECTF(8,8,width-16,height-16), fmt, b);
+					f.delete(); fmt.delete(); b.delete();
+				}
+			}
+			g.delete();
+		};
+		//选集页右下简介块（白底自绘多行）
+		win.lbBrief.onPaint = function(hdc, rcPaint, fErase, width, height){
+			import gdip;
+			var g = gdip.graphics(hdc);
+			var bg = gdip.solidBrush(0xFFFFFFFF);
+			g.fillRectangle(bg, 0, 0, width, height);
+			bg.delete();
+			var d = win.tv.detail;
+			if(d && d.des && #d.des>0){
+				var f = gdip.font("微软雅黑", 18);
+				var fmt = gdip.stringFormat(); fmt.align=0; fmt.lineAlign=0; fmt.trimming=3;
+				var b = gdip.solidBrush(0xFF444444);
+				g.drawString(d.des, f, ::RECTF(8,8,width-16,height-16), fmt, b);
+				f.delete(); fmt.delete(); b.delete();
+			}
+			g.delete();
+		};
+
+		//分类选择 -> 加载剧集
+		win.cateBar.onSelectChange = function(cat){
+			if(cat && cat.id){
+				//同步下拉框显示当前分类
+				for(i=1;#(win.tv.categories||{});1){
+					if(win.tv.categories[i].id == cat.id){
+						win.tv.cateSel = i;
+						win.cateDrop.selIndex = i;
+						break;
+					}
+				}
+				win.tv.curCateId = cat.id;
+				win.tv.page = 1;
+				win.loadVods( cat.id, null, 1 );
+			}
+		};
+		//剧集点击 -> 加载详情（选集）
+		win.grid.onSelectChange = function(item){
+			if(item && item.id) win.loadDetail( item.id );
+		};
+		//滚轮滚动到底 -> 加载下一页（分页 20/页）
+		win.grid.onLoadMore = function(){
+			var t = win.tv;
+			if(t.curCateId && t.mode == "vod" && ! t.loadingMore){
+				t.loadingMore = true;
+				t.page += 1;
+				win.loadVodsMore( t.curCateId, null, t.page );
+			}
+		};
+		//分类下拉框选择（右侧下拉，滚轮可选所有分类）
+		win.cateDrop.oncommand = function(id,event){
+			var t = win.tv;
+			var sel = win.cateDrop.selIndex;
+			if(sel >= 1 && t.categories && t.categories[sel]){
+				t.cateSel = sel;
+				t.curCateId = t.categories[sel].id;
+				t.page = 1;
+				win.cateBar.select( sel ); //同步分类条高亮
+				win.loadVods( t.categories[sel].id, null, 1 );
+			}
+		};
+
+		win.showCate = function(){
+			var t = win.tv;
+			t.mode = "category";
+			win.lbTitle.text = t.source.name + " - 分类";
+			win.listMain.hide();
+			win.lbPoster.hide();
+			win.lbInfo.hide();
+			win.lbBrief.hide();
+			win.cateDrop.show();
+			win.grid.show();
+			win.cateBar.show();
+			win.reLayout();
+			win.cateBar.setCats( t.categories, t.cateSel || 1 );
+			//填充分类下拉框（所有分类可滚轮选择）
+			win.cateDrop.clear();
+			for(i=1;#(t.categories||{});1) win.cateDrop.add( t.categories[i].name );
+			win.cateDrop.selIndex = t.cateSel || 1;
+			//默认加载第一个分类的剧集
+			if(t.categories && t.categories[1]){
+				t.cateSel = t.cateSel || 1;
+				t.curCateId = t.categories[t.cateSel].id;
+				win.loadVods( t.categories[t.cateSel].id, null, 1 );
+			}
+		};
+
+		win.showVods = function(title){
+			var t = win.tv;
+			t.mode = "vod";
+			win.lbTitle.text = title;
+			win.listMain.hide();
+			win.lbPoster.hide();
+			win.lbInfo.hide();
+			win.lbBrief.hide();
+			win.cateDrop.show();
+			win.cateBar.show();
+			win.grid.show();
+			win.reLayout();
+			win.grid.setItems( t.vods );
+		};
+
+		win.showEpisodes = function(){
+			var t = win.tv;
+			t.mode = "episode";
+			var d = t.detail;
+			win.lbTitle.text = (d && d.name? d.name : "剧集") + " - 选集";
+			win.grid.hide();
+			win.cateBar.hide();
+			win.cateDrop.hide();
+			//显示选集页控件（海报 + 信息 + 简介 + 下方选集列表）
+			win.lbPoster.show();
+			win.lbInfo.show();
+			win.lbBrief.show();
+			win.listMain.show();
+			win.reLayout();
+			//信息块（上块：节目名 + 上映时间 + 导演 + 主演）
+			if(d){
+				//信息块与简介块由 onPaint 自绘（从 detail 读取），这里只触发重绘
+				win.lbInfo.invalidate();
+				win.lbBrief.invalidate();
+				//海报（重置并异步下载）
+				t.poster.img = null;
+				t.poster.loading = false;
+				t.poster.url = null;
+				win.lbPoster.invalidate();
+				if(d.pic && d.pic != "") win.loadPoster( d.pic );
+			}
+			else{
+				win.lbInfo.invalidate();
+				win.lbBrief.invalidate();
+			}
+			//下方选集列表（作为播放按钮）
+			win.listMain.clear();
+			var texts = {};
+			if(d && d.sources && d.sources[1] && d.sources[1].items){
+				for(i=1;#d.sources[1].items;1){
+					var it = d.sources[1].items[i];
+					..table.push(texts, (it.name? it.name : "第"+i+"集") + (it.url? "  ▶" : ""));
+					win.listMain.setItemData(i, i);
+				}
+			}
+			else{
+				..table.push(texts, "（无播放源）");
+			}
+			win.listMain.addItems(texts);
+			win.listMain.redraw();
+		};
+
+		//选集列表点击
+		win.listMain.oncommand = function(id,event){
+			var t = win.tv;
+			var idx = win.listMain.selIndex;
+			if(! idx || t.mode != "episode") return;
+			var d = t.detail;
+			var it = (d && d.sources && d.sources[1] && d.sources[1].items) ? d.sources[1].items[idx] : null;
+			if(it && it.url) win.playUrl( it.url, d.name? d.name : "点播" );
+		};
+
+		//异步加载分类
+		win.loadCates = function(){
+			win.lbTitle.text = source.name + " - 加载分类...";
+			var hwnd = win.hwnd;
+			thread.invoke(
+				function(hwnd, base){
+					import thread.command;
+					string.loadcode("/lib/netApi.aardio");
+					string.loadcode("/lib/tvboxApi.aardio");
+					netApi = lib.netApi;
+					tvboxApi = lib.tvboxApi;
+					var r = null;
+					try{ r = tvboxApi.getCategories(base); }catch(e){ r = null; }
+					thread.command.post(hwnd, "onTvCates", r);
+				}, hwnd, source.url
+			);
+		};
+
+		//异步加载剧集
+		win.loadVods = function(cateId, wd, page){
+			var hwnd = win.hwnd;
+			thread.invoke(
+				function(hwnd, base, cateId, wd, page){
+					import thread.command;
+					string.loadcode("/lib/netApi.aardio");
+					string.loadcode("/lib/tvboxApi.aardio");
+					netApi = lib.netApi;
+					tvboxApi = lib.tvboxApi;
+					var r = null;
+					try{ r = tvboxApi.getVodList(base, cateId, wd, page); }catch(e){ r = null; }
+					thread.command.post(hwnd, "onTvVods", r);
+				}, hwnd, source.url, cateId, wd, page
+			);
+		};
+
+		//异步加载下一页（分页追加）
+		win.loadVodsMore = function(cateId, wd, page){
+			var hwnd = win.hwnd;
+			thread.invoke(
+				function(hwnd, base, cateId, wd, page){
+					import thread.command;
+					string.loadcode("/lib/netApi.aardio");
+					string.loadcode("/lib/tvboxApi.aardio");
+					netApi = lib.netApi;
+					tvboxApi = lib.tvboxApi;
+					var r = null;
+					try{ r = tvboxApi.getVodList(base, cateId, wd, page); }catch(e){ r = null; }
+					thread.command.post(hwnd, "onTvVodsMore", r);
+				}, hwnd, source.url, cateId, wd, page
+			);
+		};
+
+		//异步加载详情
+		win.loadDetail = function(vodId){
+			var hwnd = win.hwnd;
+			thread.invoke(
+				function(hwnd, base, vodId){
+					import thread.command;
+					string.loadcode("/lib/netApi.aardio");
+					string.loadcode("/lib/tvboxApi.aardio");
+					netApi = lib.netApi;
+					tvboxApi = lib.tvboxApi;
+					var r = null;
+					try{ r = tvboxApi.getDetail(base, vodId); }catch(e){ r = null; }
+					thread.command.post(hwnd, "onTvDetail", r);
+				}, hwnd, source.url, vodId
+			);
+		};
+
+		//线程回调
+		win.tv.cmd = thread.command(win);
+		win.tv.cmd.onTvCates = function(r){
+			if(! r){
+				win.lbTitle.text = source.name + " - 源解析失败（接口无响应或需更新）";
+				return;
+			}
+			win.tv.categories = r;
+			win.showCate();
+		};
+		win.tv.cmd.onTvVods = function(r){
+			if(! r){
+				win.lbTitle.text = "加载失败，请重试或检查网络";
+				return;
+			}
+			win.tv.vods = r;
+			win.showVods( win.tv.curWd ? ("搜索：" + win.tv.curWd) : "剧集列表" );
+		};
+		win.tv.cmd.onTvVodsMore = function(r){
+			var t = win.tv;
+			t.loadingMore = false;
+			if(r && #r > 0){
+				for(i=1;#r;1) ..table.push(t.vods, r[i]);
+				win.grid.appendItems( r );
+			}
+			else{
+				win.grid.loadingMore = false; //空/失败：释放分页锁，允许再次滚动重试
+			}
+		};
+		win.tv.cmd.onTvDetail = function(r){
+			if(! r){
+				win.lbTitle.text = "详情解析失败";
+				return;
+			}
+			win.tv.detail = r;
+			win.showEpisodes();
+		};
+		//选集页海报下载完成回调
+		win.tv.cmd.onPoster = function(r){
+			var t = win.tv;
+			if(r && r.data){
+				try{
+					import gdip;
+					t.poster.img = gdip.image(r.data);
+				}catch(e){ t.poster.img = null; }
+			}
+			t.poster.loading = false;
+			win.lbPoster.invalidate();
+		};
+
+		//播放真实地址（vodPlay 内部保证单一播放窗口，重复点击自动关闭旧的）
+		win.playUrl = function(url, title){
+			var now = time.tick();
+			if(url == tvboxIndex.lastPlayUrl && now - tvboxIndex.lastPlayTick < 500) return; //同地址0.5s内防抖，双击只开一次
+			tvboxIndex.lastPlayUrl = url;
+			tvboxIndex.lastPlayTick = now;
+			var cfg = {
+				liveSource = win.tv.config? win.tv.config.liveSource : {};
+				vodSource  = win.tv.config? win.tv.config.vodSource : {};
+			};
+			forms.vodPlay.open( title, url, cfg );
+		};
+
+		//按当前窗口尺寸重排全部控件（窗口缩放 / 页面切换时调用）
+		win.reLayout = function(){
+			var m = 10;
+			var rc = win.getClientRect();
+			var cx = rc.right - rc.left;
+			var cy = rc.bottom - rc.top;
+			//顶部分类条：宽度减少（分类条右端与下拉框拉开足够间距，右箭头不与下拉框重叠）
+			var dropW = 140;
+			var cbW = math.max(240, cx - m*2 - dropW - 60);
+			win.cateBar.scrollX = 0; //窗口尺寸变化时重置滚动，避免标签侵入左右箭头区
+			::SetWindowPos(win.cateBar.form.hwnd, 0, m, 58, cbW, 40, 0x0010|0x0004);
+			//分类下拉（右侧，与分类条拉开 60px 间距，确保右箭头完全分开）
+			::SetWindowPos(win.cateDrop.hwnd, 0, m+cbW+60, 58, dropW, 28, 0x0010|0x0004);
+			//网格卡片区（宽随窗口 -> 列数自适应）
+			::SetWindowPos(win.grid.form.hwnd, 0, m, 104, cx-m*2, cy-104-m, 0x0010|0x0004);
+			//选集页控件
+			::SetWindowPos(win.lbPoster.hwnd, 0, 20, 58, 180, 320, 0x0010|0x0004);
+			::SetWindowPos(win.lbInfo.hwnd,   0, 220, 58, cx-220-m, 152, 0x0010|0x0004);
+			::SetWindowPos(win.lbBrief.hwnd,  0, 220, 220, cx-220-m, 170, 0x0010|0x0004);
+			::SetWindowPos(win.listMain.hwnd, 0, m, 400, cx-m*2, cy-m-400, 0x0010|0x0004);
+		};
+		win.onSize = function(cx,cy){ win.reLayout(); };
+
+		//异步下载选集页海报
+		win.loadPoster = function(url){
+			var t = win.tv;
+			t.poster.loading = true;
+			t.poster.url = url;
+			win.lbPoster.invalidate();
+			var hwnd = win.hwnd;
+			thread.invoke(function(hwnd, url){
+				import thread.command;
+				string.loadcode("/lib/netApi.aardio");
+				netApi = lib.netApi;
+				var data = null;
+				try{ data = netApi.downloadBinary(url); }catch(e){ data = null; }
+				thread.command.post(hwnd, "onPoster", { url=url; data=data });
+			}, hwnd, url);
+		};
+
+		//按钮事件
+		win.btnBack.oncommand = function(){
+			var t = win.tv;
+			if(t.mode == "episode") win.showVods("剧集列表");
+			elseif(t.mode == "vod") win.showCate();
+			else win.close();
+		};
+		win.btnHome.oncommand = function(){ win.close(); };
+		win.btnSearch.oncommand = function(){
+			var wd = win.editSearch.text;
+			if(! wd || #wd==0) return;
+			win.tv.curWd = wd;
+			win.loadVods( null, wd, 1 );
+		};
+
+		win.show();
+		win.loadCates();
+		return win;
+	};
+}
+
+forms = forms or {};
+forms.tvboxIndex = tvboxIndex;

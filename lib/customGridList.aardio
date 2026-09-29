@@ -1,0 +1,279 @@
+//lib/customGridList.aardio  GDI自绘网格卡片控件
+//用途：点播列表页网格卡片（封面图 + 片名 + 简介/期数），滚轮纵向滚动，点击选中
+//数据：items = { { name; pic; remarks; brief; id } }
+//封面：异步下载缓存（gdip 从字节加载），未下载时画占位色块 + "封面加载中"
+//资源管理：字体/画笔每帧创建并 delete；封面 gdip.image 缓存到 ctl.picImg（控件销毁时清理）
+customGridList = {
+
+	create = function(parent, rect, style){
+		style = style || {};
+		var textColor    = style.textColor    || 0xFF333333;
+		var nameColor    = style.nameColor    || 0xFF111111;
+		var subColor     = style.subColor     || 0xFF888888;
+		var selColor     = style.selColor     || 0x330078D7;
+		var bgColor      = style.bgColor      || 0xFFF5F5F7;
+		var placeholder  = style.placeholder  || 0xFFD9D9DE;
+
+		import win.ui;
+		var child = win.form({
+			parent = parent;
+			mode = "child";
+			exmode = "none";
+			border = "none";
+			left = rect.left;
+			top = rect.top;
+			right = rect.left + rect.width;
+			bottom = rect.top + rect.height;
+			bgcolor = 0;
+		});
+
+		var ctl = {
+			form = child;
+			items = {};
+			cols = style.cols || 4;
+			scroll = 0;        //像素纵向滚动
+			selected = 0;      //选中 item 索引（0 未选）
+			picCache = {};     //url -> 字节字符串
+			picImg = {};       //url -> gdip.image 对象（缓存复用）
+			loading = {};      //已发起下载的 url（避免重复）
+			cardW = 0;
+			cardH = 0;
+			onSelectChange = null; //function(item){}
+			onLoadMore = null; //function(){} 滚到底触发
+			loadingMore = false; //加载更多进行中
+			onRightClick = null;
+		};
+		child.ctl = ctl;
+
+		//========== 封面异步下载 ==========
+		import thread.command;
+		child.cmd = thread.command(child);
+		child.cmd.onGridPic = function(r){
+			if(r && r.url && r.data){
+				ctl.picCache[r.url] = r.data;
+				ctl.loading[r.url] = false;
+				child.invalidate();
+			}
+		};
+		ctl.loadPics = function(){
+			var pending = {};
+			for(i=1;#ctl.items;1){
+				var it = ctl.items[i];
+				if(it && it.pic && ! ctl.picCache[it.pic] && ! ctl.loading[it.pic]){
+					ctl.loading[it.pic] = true;
+					..table.push(pending, { url = it.pic });
+				}
+			}
+			if(#pending==0) return;
+			for(k=1;#pending;1){
+				var it = pending[k];
+				thread.invoke(function(hwnd, url){
+					import thread.command;
+					string.loadcode("/lib/netApi.aardio");
+					netApi = lib.netApi;
+					var data = null;
+					try{ data = netApi.downloadBinary(url); }catch(e){ data = null; }
+					thread.command.post(hwnd, "onGridPic", { url = url; data = data });
+				}, child.hwnd, it.url);
+			}
+		};
+
+		//========== 绘制 ==========
+		child.onPaint = function(hdc, rcPaint, fErase, width, height){
+			import gdip;
+			var g = gdip.graphics(hdc);
+
+			var bg = gdip.solidBrush(bgColor);
+			g.fillRectangle(bg, 0, 0, width, height);
+			bg.delete();
+
+			var items = ctl.items;
+			if(! items || #items == 0){
+				var noFont = gdip.font("微软雅黑", 14);
+				var noBrush = gdip.solidBrush(textColor);
+				var noFmt = gdip.stringFormat();
+				noFmt.align = 1; noFmt.lineAlign = 1;
+				g.drawString("暂无数据", noFont, ::RECTF(0,0,width,height), noFmt, noBrush);
+				noFont.delete(); noBrush.delete(); noFmt.delete(); g.delete();
+				return;
+			}
+
+			//响应式列数：随控件宽度自适应（窄窗口4列，宽窗口5~6列，图片大小随之变化）
+			var cols = 6; //默认窗口一行6个
+			if(width >= 1700) cols = 8;
+			elseif(width >= 1300) cols = 7;
+			ctl.cols = cols;
+			var margin = 6, gap = 6;
+			var availW = width - margin*2 - gap*(cols-1);
+			if(availW < 20) availW = 20;
+			var cw = math.floor(availW / cols);
+			if(cw < 30) cw = 30;
+			var nameH = 36;
+			var subH = 30;
+			var coverPad = 16; //海报左右留白（海报等比缩小）
+			var coverW = cw - coverPad*2;
+			if(coverW < 30) coverW = 30;
+			var coverH = math.floor(coverW * 16 / 9); //9:16 竖版封面
+			if(coverH < 40) coverH = 40;
+			var cardH = coverH + nameH + subH; //封面9:16 + 两行文字
+			ctl.cardW = cw;
+			ctl.cardH = cardH;
+
+			var fontName = gdip.font("微软雅黑", 15, 0);
+			var fontSub  = gdip.font("微软雅黑", 13);
+			var brushName = gdip.solidBrush(nameColor);
+			var brushSub  = gdip.solidBrush(subColor);
+			var brushPh   = gdip.solidBrush(placeholder);
+			var fmtL = gdip.stringFormat();
+			fmtL.align = 0; fmtL.lineAlign = 1;
+			fmtL.trimming = 2; //省略号
+
+			var rows = math.ceil(#items / cols);
+			var top = ctl.scroll;
+			var startRow = math.floor(top / cardH) + 1;
+			if(startRow < 1) startRow = 1;
+			for(r=startRow; r<=rows; 1){
+				var yCard = (r-1)*cardH - top;
+				if(yCard > height) break;
+				for(c=1; cols; 1){
+					var idx = (r-1)*cols + c;
+					if(idx > #items) break;
+					var it = items[idx];
+					var xCard = margin + (c-1)*(cw+gap);
+					//封面区（方形）
+					var hasImg = (it && it.pic && ctl.picCache[it.pic]);
+					if(hasImg){
+						var img = ctl.picImg[it.pic];
+						if(! img){
+							try{ img = gdip.image(ctl.picCache[it.pic]); ctl.picImg[it.pic] = img; }catch(e){ img = null; ctl.picImg[it.pic] = null; }
+						}
+						if(img && img.isValid){
+							g.drawImage(img, xCard+coverPad, yCard, coverW, coverH);
+						}
+						else{
+							g.fillRectangle(brushPh, xCard+coverPad, yCard, coverW, coverH);
+						}
+					}
+					else{
+						g.fillRectangle(brushPh, xCard+coverPad, yCard, coverW, coverH);
+						if(it && it.pic){
+							var lf = gdip.font("微软雅黑", 12);
+							var lf2 = gdip.stringFormat(); lf2.align=1; lf2.lineAlign=1;
+							g.drawString("封面加载中", lf, ::RECTF(xCard+coverPad,yCard,coverW,coverH), lf2, brushSub);
+							lf.delete(); lf2.delete();
+						}
+					}
+					//选中高亮（覆盖封面与文字）
+					if(idx == ctl.selected){
+						var sel = gdip.solidBrush(selColor);
+						g.fillRectangle(sel, xCard, yCard, cw, cardH);
+						sel.delete();
+					}
+					//片名
+					var nm = it ? (it.name? it.name : "未知") : "";
+					g.drawString(nm, fontName, ::RECTF(xCard+2, yCard+coverH, cw-4, nameH), fmtL, brushName);
+					//简介/期数
+					var sub = "";
+					if(it){
+						sub = it.remarks ? it.remarks : (it.brief ? it.brief : "");
+					}
+					if(sub && #sub > 12) sub = string.left(sub, 12) + "…";
+					g.drawString(sub, fontSub, ::RECTF(xCard+2, yCard+coverH+nameH, cw-4, subH), fmtL, brushSub);
+				}
+			}
+			fontName.delete(); fontSub.delete();
+			brushName.delete(); brushSub.delete(); brushPh.delete();
+			fmtL.delete();
+			g.delete();
+		};
+
+		//========== 滚轮 ==========
+		ctl.doScroll = function(delta){
+			var mx = math.max(0, math.ceil(#ctl.items / ctl.cols) * ctl.cardH - (child.getClientRect().bottom - child.getClientRect().top) );
+			var maxScroll = math.max(0, math.ceil(#ctl.items / ctl.cols) * ctl.cardH - (child.getClientRect().bottom - child.getClientRect().top) );
+			var step = delta > 0 ? -ctl.cardH : ctl.cardH;
+			ctl.scroll = ctl.scroll + step;
+			if(ctl.scroll < 0) ctl.scroll = 0;
+			if(ctl.scroll > maxScroll){
+				ctl.scroll = maxScroll;
+				//滚到底且向下滚动 -> 触发加载更多（分页 20/页）
+				if(delta < 0 && ctl.onLoadMore && ! ctl.loadingMore){
+					ctl.loadingMore = true;
+					ctl.onLoadMore();
+				}
+			}
+			child.invalidate();
+		};
+		child.onMouseWheel = function(delta){ ctl.doScroll( delta ); };
+
+		//========== 点击 / 右键 ==========
+		child.wndproc = {
+			[0x020A/*WM_MOUSEWHEEL*/] = function(hwnd,message,wParam,lParam){
+				//wParam 高 16 位为滚轮增量（±120）
+				var d = (wParam >> 16) & 0xFFFF;
+				if(d >= 0x8000) d = d - 0x10000;
+				ctl.doScroll( d );
+				return 0;
+			};
+			[0x201/*WM_LBUTTONDOWN*/] = function(hwnd,message,wParam,lParam){
+				if(#ctl.items == 0) return true;
+				var x = lParam & 0xFFFF;
+				var y = (lParam >> 16) & 0xFFFF;
+				var row = math.floor((ctl.scroll + y) / ctl.cardH) + 1;
+				var margin = 6, gap = 6, cw = ctl.cardW, cols = ctl.cols || 4;
+				var c = math.floor((x - margin) / (cw+gap)) + 1;
+				if(c < 1) c = 1;
+				if(c > cols) c = cols;
+				var idx = (row-1)*cols + c;
+				if(idx < 1 || idx > #ctl.items) return true;
+				ctl.selected = idx;
+				child.invalidate();
+				if( ctl.onSelectChange ) ctl.onSelectChange( ctl.items[idx], idx );
+				return true;
+			};
+			[0x205/*WM_RBUTTONUP*/] = function(hwnd,message,wParam,lParam){
+				if( ctl.onRightClick ) ctl.onRightClick();
+				return true;
+			};
+		};
+
+		//窗口缩放重绘
+		child.onMoveForm = function(){ child.invalidate(); };
+
+		//========== 对外方法 ==========
+		ctl.setItems = function(items){
+			ctl.items = items || {};
+			ctl.scroll = 0;
+			ctl.selected = 0;
+			ctl.loadingMore = false;
+			child.invalidate();
+			ctl.loadPics();
+		};
+		ctl.appendItems = function(items){
+			for(i=1;#(items||{});1) ..table.push(ctl.items, items[i]);
+			ctl.loadingMore = false;
+			child.invalidate();
+			ctl.loadPics();
+		};
+		ctl.show = function(){
+			child.show();
+			//child form 的 left/top 定位可能不生效，用 SetWindowPos 强制定位到指定区域
+			::SetWindowPos(child.hwnd, 0, rect.left, rect.top, rect.width, rect.height, 0x0010|0x0004/*SWP_NOACTIVATE|SWP_NOZORDER*/);
+		};
+		ctl.hide = function(){ child.hide(); };
+		ctl.clear = function(){ ctl.setItems({}); };
+		ctl.destroy = function(){
+			//释放缓存的 gdip.image 对象
+			for(k,img in ctl.picImg){
+				if(img && img.isValid) try{ img.delete(); }catch(e){}
+			}
+			ctl.picImg = {};
+			child.close();
+		};
+
+		return ctl;
+	};
+}
+
+lib = lib or {};
+lib.customGridList = customGridList;

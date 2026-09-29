@@ -1,0 +1,171 @@
+//lib/customCateBar.aardio  GDI自绘横向分类导航条
+//用途：点播页顶部一行分类标签（推荐/电影/电视剧/...），可横向滚动，点击选中
+//数据：cats = { { id; name } }
+customCateBar = {
+
+	create = function(parent, rect, style){
+		style = style || {};
+		var textColor = style.textColor || 0xFF333333;
+		var selColor  = style.selColor  || 0xFF4A6CF7;
+		var selText   = style.selText   || 0xFFFFFFFF;
+		var bgColor   = style.bgColor   || 0xFFFFFFFF;
+
+		import win.ui;
+		var child = win.form({
+			parent = parent;
+			mode = "child";
+			exmode = "none";
+			border = "none";
+			left = rect.left;
+			top = rect.top;
+			right = rect.left + rect.width;
+			bottom = rect.top + rect.height;
+			bgcolor = 0;
+		});
+
+		var ctl = {
+			form = child;
+			cats = {};
+			selIndex = 1;
+			scrollX = 0;
+			tabW = 86;
+			tabH = 0;
+			arrowW = 26;  //左右滑动键宽度（像素），点击滚动分类条
+			onSelectChange = null; //function(cat){}
+		};
+		child.ctl = ctl;
+
+		child.onPaint = function(hdc, rcPaint, fErase, width, height){
+			import gdip;
+			var g = gdip.graphics(hdc);
+			var bg = gdip.solidBrush(bgColor);
+			g.fillRectangle(bg, 0, 0, width, height);
+			bg.delete();
+
+			var cats = ctl.cats;
+			if(! cats || #cats == 0){
+				var noFont = gdip.font("微软雅黑", 13);
+				var noBrush = gdip.solidBrush(textColor);
+				var noFmt = gdip.stringFormat(); noFmt.align=0; noFmt.lineAlign=1;
+				g.drawString("无分类", noFont, ::RECTF(8,0,width-16,height), noFmt, noBrush);
+				noFont.delete(); noBrush.delete(); noFmt.delete(); g.delete();
+				return;
+			}
+
+			ctl.tabH = height;
+			var tabW = ctl.tabW;
+			var font = gdip.font("微软雅黑", 12);
+			var fmt = gdip.stringFormat(); fmt.align=1; fmt.lineAlign=1;
+			var aw = ctl.arrowW;
+
+			//左右滑动键（分类条两端各画一个灰色箭头区）
+			var af   = gdip.font("微软雅黑", 16);
+			var ab   = gdip.solidBrush(0xFFDADADA);
+			var afmt = gdip.stringFormat(); afmt.align=1; afmt.lineAlign=1;
+			var at   = gdip.solidBrush(0xFF333333);
+			g.fillRectangle(ab, 0, 0, aw, height);
+			g.fillRectangle(ab, width-aw, 0, aw, height);
+			g.drawString("◀", af, ::RECTF(0,0,aw,height), afmt, at);
+			g.drawString("▶", af, ::RECTF(width-aw,0,aw,height), afmt, at);
+			af.delete(); ab.delete(); afmt.delete(); at.delete();
+
+			//分类标签区从右箭头右侧开始（相对 scrollX 平移），并裁剪在左右箭头区之间
+			var xOff = aw - ctl.scrollX;
+			var clipL = aw;            //左箭头区右边界（标签不侵入左箭头）
+			var clipR = width - aw;    //右箭头区左边界（标签不侵入右箭头）
+			for(i=1;#cats;1){
+				var cat = cats[i];
+				var x1 = xOff + (i-1)*tabW;
+				var x2 = x1 + tabW;
+				if(x2 <= clipL) { continue; }
+				if(x1 >= clipR) break;
+				var dL = math.max(x1, clipL);
+				var dR = math.min(x2, clipR);
+				var dw = dR - dL;
+				if(dw < 2) continue;
+				if(i == ctl.selIndex){
+					var sel = gdip.solidBrush(selColor);
+					//圆角矩形（简单直角即可）
+					g.fillRectangle(sel, dL+4, 4, dw-8, height-8);
+					sel.delete();
+					var tb = gdip.solidBrush(selText);
+					g.drawString(cat.name?cat.name:"", font, ::RECTF(dL+2, 0, dw-4, height), fmt, tb);
+					tb.delete();
+				}
+				else{
+					var tb = gdip.solidBrush(textColor);
+					g.drawString(cat.name?cat.name:"", font, ::RECTF(dL+2, 0, dw-4, height), fmt, tb);
+					tb.delete();
+				}
+			}
+			font.delete(); fmt.delete(); g.delete();
+		};
+
+		child.onMouseWheel = function(delta){
+			var cats = ctl.cats;
+			if(!cats || #cats==0) return;
+			var totalW = #cats * ctl.tabW;
+			var clientW = child.getClientRect().right - child.getClientRect().left;
+			var maxScroll = math.max(0, totalW - (clientW - ctl.arrowW*2));
+			var step = delta > 0 ? -ctl.tabW : ctl.tabW;
+			ctl.scrollX = ctl.scrollX + step;
+			if(ctl.scrollX < 0) ctl.scrollX = 0;
+			if(ctl.scrollX > maxScroll) ctl.scrollX = maxScroll;
+			child.invalidate();
+		};
+
+		child.wndproc = {
+			[0x201/*WM_LBUTTONDOWN*/] = function(hwnd,message,wParam,lParam){
+				if(! ctl.cats || #ctl.cats==0) return true;
+				var x = lParam & 0xFFFF;
+				var aw = ctl.arrowW;
+				var clientW = child.getClientRect().right - child.getClientRect().left;
+				var totalW = #ctl.cats * ctl.tabW;
+				var maxScroll = math.max(0, totalW - (clientW - aw*2));
+				//点击左滑动键 -> 向左滚动一屏标签
+				if(x < aw){
+					ctl.scrollX = ctl.scrollX - ctl.tabW;
+					if(ctl.scrollX < 0) ctl.scrollX = 0;
+					child.invalidate();
+					return true;
+				}
+				//点击右滑动键 -> 向右滚动一屏标签
+				if(x >= clientW - aw){
+					ctl.scrollX = ctl.scrollX + ctl.tabW;
+					if(ctl.scrollX > maxScroll) ctl.scrollX = maxScroll;
+					child.invalidate();
+					return true;
+				}
+				//点击分类标签 -> 选中
+				var idx = math.floor((ctl.scrollX + (x - aw)) / ctl.tabW) + 1;
+				if(idx < 1 || idx > #ctl.cats) return true;
+				ctl.selIndex = idx;
+				child.invalidate();
+				if( ctl.onSelectChange ) ctl.onSelectChange( ctl.cats[idx], idx );
+				return true;
+			};
+		};
+
+		child.onMoveForm = function(){ child.invalidate(); };
+
+		ctl.setCats = function(cats, selIndex){
+			ctl.cats = cats || {};
+			ctl.selIndex = selIndex || 1;
+			ctl.scrollX = 0;
+			child.invalidate();
+		};
+		ctl.select = function(i){ ctl.selIndex = i; child.invalidate(); };
+		ctl.show = function(){
+			child.show();
+			//child form 的 left/top 定位可能不生效，用 SetWindowPos 强制定位到指定区域
+			::SetWindowPos(child.hwnd, 0, rect.left, rect.top, rect.width, rect.height, 0x0010|0x0004/*SWP_NOACTIVATE|SWP_NOZORDER*/);
+		};
+		ctl.hide = function(){ child.hide(); };
+		ctl.destroy = function(){ child.close(); };
+
+		return ctl;
+	};
+}
+
+lib = lib or {};
+lib.customCateBar = customCateBar;

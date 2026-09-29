@@ -1,0 +1,118 @@
+//forms/setting.aardio  设置窗口
+//可编辑项目：2个直播源、5个点播源（名称、类型、接口地址）
+//保存前校验URL合法性，JSON写入本地配置
+import win.ui;
+
+setting = {
+
+	open = function(parentForm, onSaved){
+		var cfg = configMgr.load();
+
+		var win = win.form({
+			text = "设置 - 播放源管理";
+			right = 760;
+			bottom = 720;
+			bgcolor = 0xF5F5F7;
+		});
+
+		var y = 14;
+		var specs = {};
+		specs.lbTip = { cls="static"; transparent=1; text="直播源（5条，仅可编辑名称与地址）"; left=20; top=y; right=520; bottom=y+24; font=LOGFONT(h=-15;name="微软雅黑") };
+		y = y + 34;
+
+		win.liveRows = {};
+		for(i=1;5;1){
+			var src = cfg.liveSource[i];
+			var nm = "live_label_" + i;
+			var nr = "live_name_" + i;
+			var ur = "live_url_" + i;
+			specs[nm] = { cls="static"; transparent=1; text="直播源"+i; left=20; top=y+6; right=80; bottom=y+28 };
+			specs[nm+"_lbln"] = { cls="static"; transparent=1; text="名称"; left=90; top=y-2; right=180; bottom=y+14 };
+			specs[nm+"_lblu"] = { cls="static"; transparent=1; text="接口地址"; left=360; top=y-2; right=470; bottom=y+14 };
+			//specs[nm+"_typet"] = { cls="static"; transparent=1; text="类型: m3u"; left=360; top=y+28; right=470; bottom=y+44 };
+			specs[nr] = { cls="edit"; text=src.name; left=90; top=y+18; right=340; bottom=y+44 };
+			specs[ur] = { cls="edit"; text=src.url; left=360; top=y+18; right=740; bottom=y+44 };
+			win.liveRows[i] = { name = nr; url = ur };
+			y = y + 56;
+		}
+
+		y = y + 8;
+		specs.lbTip2 = { cls="static"; transparent=1; text="点播源（5条，仅可编辑名称与地址）"; left=20; top=y; right=520; bottom=y+24; font=LOGFONT(h=-15;name="微软雅黑") };
+		y = y + 34;
+
+		win.vodRows = {};
+		for(i=1;5;1){
+			var src = cfg.vodSource[i];
+			var nm = "vod_label_" + i;
+			var nr = "vod_name_" + i;
+			var ur = "vod_url_" + i;
+			specs[nm] = { cls="static"; transparent=1; text="点播源"+i; left=20; top=y+6; right=80; bottom=y+28 };
+			specs[nm+"_lbln"] = { cls="static"; transparent=1; text="名称"; left=90; top=y-2; right=180; bottom=y+14 };
+			specs[nm+"_lblu"] = { cls="static"; transparent=1; text="接口地址"; left=360; top=y-2; right=470; bottom=y+14 };
+			//specs[nm+"_typet"] = { cls="static"; transparent=1; text="类型: tvbox"; left=360; top=y+28; right=470; bottom=y+44 };
+			specs[nr] = { cls="edit"; text=src.name; left=90; top=y+18; right=340; bottom=y+44 };
+			specs[ur] = { cls="edit"; text=src.url; left=360; top=y+18; right=740; bottom=y+44 };
+			win.vodRows[i] = { name = nr; url = ur };
+			y = y + 56;
+		}
+
+		y = y + 12;
+		specs.btnSave = { cls="button"; text="保存"; left=300; top=y; right=380; bottom=y+36 };
+		specs.btnCancel = { cls="button"; text="取消"; left=400; top=y; right=480; bottom=y+36 };
+		win.bottom = y + 60;
+
+		win.add(specs);
+
+		//接口地址空框水印提示（Windows cue banner：空框显示灰色类型提示；点击聚焦自动隐藏；输入后不显示）
+		for(i=1;5;1){
+			win[ win.liveRows[i].url ].setCueBannerText("请输入m3u地址");
+		}
+		for(i=1;5;1){
+			win[ win.vodRows[i].url ].setCueBannerText("请输入tvbox地址");
+		}
+
+		win.isValidUrl = function(s){
+			s = string.trim(s);
+			if(! s || #s==0) return true;   //空地址：该源未配置地址，允许保持现状直接保存
+			if( string.left(s,7) != "http://" && string.left(s,8) != "https://" ) return false,"地址必须以 http:// 或 https:// 开头";
+			return true;
+		};
+
+		win.btnSave.oncommand = function(){
+			var i;
+			for(i=1;5;1){
+				var ok,err = win.isValidUrl( win[ win.liveRows[i].url ].text );
+				if(! ok){ win.msgboxErr("直播源"+i+"："+err); return; }
+				}
+			for(i=1;5;1){
+				var ok,err = win.isValidUrl( win[ win.vodRows[i].url ].text );
+				if(! ok){ win.msgboxErr("点播源"+i+"："+err); return; }
+				}
+
+			var newCfg = configMgr.load();
+			for(i=1;5;1){
+				newCfg.liveSource[i].name = string.trim( win[ win.liveRows[i].name ].text );
+				newCfg.liveSource[i].url  = string.trim( win[ win.liveRows[i].url ].text );
+			}
+			for(i=1;5;1){
+				newCfg.vodSource[i].name = string.trim( win[ win.vodRows[i].name ].text );
+				newCfg.vodSource[i].url  = string.trim( win[ win.vodRows[i].url ].text );
+			}
+			var ok = configMgr.save(newCfg);
+			if(! ok){
+				win.msgboxErr("保存配置失败");
+				return;
+			}
+			if(onSaved) onSaved(newCfg);
+			win.close();
+		};
+
+		win.btnCancel.oncommand = function(){ win.close(); };
+
+		win.show();
+		return win;
+	};
+}
+
+forms = forms or {};
+forms.setting = setting;

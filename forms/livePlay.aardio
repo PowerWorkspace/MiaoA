@@ -1,0 +1,331 @@
+//forms/livePlay.aardio  直播播放窗口
+//布局：左侧视频画面（web.view + HTML5 video 播放器，原生控制条）+ 右侧节目单
+//播放器方案：web.view（Edge WebView2）嵌入 HTML5 <video>，用 hls.js 播放 m3u8 直播流
+//   HTML5 video 原生 controls 提供：播放/暂停、音量、全屏、进度条、运行时间
+//节目单：顶部为频道分类分组头（点击切换分组），下方为频道列表（滚轮滚动，点击频道切换播放）
+import win.ui;
+import web.view;
+import wsock.tcp.asyncHttpServer;   //web.view 用本地 HTTP 服务器打开工程内 html 及其资源
+var _formCtor = win.form;  //保存窗体构造函数，供创建子窗口
+string.loadcode("/lib/customProgramList.aardio");
+string.loadcode("/lib/m3uParser.aardio");
+livePlay = {
+	//打开直播播放窗口
+	//source: {name,url}
+	open = function(source){
+		import thread.command;
+		var win = win.form({
+			text = "直播播放 - " + (source.name?source.name:"");
+			right = 1100;
+			bottom = 600;
+			bgcolor = 0x000000;
+			min = 640;
+			max = 480;
+		});
+		//======== 直播页布局参数 ========
+		//想改"视频插件/节目单"的宽高，修改下面这几个常量即可：
+		var MARGIN   = 20;   //视频左右黑边（像素）。改大 → 视频左右留更多黑边、视频变窄
+		var LIST_W   = 330;  //右侧节目单固定宽度（像素）。改大 → 节目单变宽、视频变窄
+		var LIST_GAP = 20;   //视频右侧与节目单之间的黑边间距（像素，也即右黑边）
+		var LIST_TOP = 8;    //节目单上/下边距（像素）
+		var DESIGN_W = 1100; //窗口初始宽度（像素）
+		var DESIGN_H = 640;  //窗口初始高度（像素）
+		//——视频插件容器区域（HTML5 <video> 填满此区域，画面自动等比缩放）——
+		//视频宽度 = 窗口宽 - 左黑边 - 右黑边 - 节目单宽 - 节目单与视频间距
+		//视频高度 = 窗口高度（拖动窗口垂直缩放时视频跟随）
+		var videoLeft   = MARGIN;                          //视频左边界（含左黑边）
+		var videoTop    = 0;                               //视频上边界（贴窗口顶部）
+		var videoRight  = DESIGN_W - MARGIN - LIST_W - LIST_GAP; //视频右边界
+		var videoBottom = DESIGN_H;                        //视频下边界（贴窗口底部）
+		var listLeft    = DESIGN_W - MARGIN - LIST_W;      //节目单左边界
+		var listHeight  = DESIGN_H - LIST_TOP*2;           //节目单高度（跟随窗口高度）
+		win.add(
+			video = { cls="custom"; left=videoLeft; top=videoTop; right=videoRight; bottom=videoBottom; bgcolor=0; z=1 };   //web.view 播放器容器（尺寸由 onSize 随窗口重排）
+		);
+		//右侧节目单（customProgramList：分组头分类导航 + 频道列表，滚轮 + 点击，鼠标穿透到主窗口）
+		win.list = customProgramList.create(win, { left=listLeft; top=LIST_TOP; width=LIST_W; height=listHeight }, { bgColor=0xFFF5F5F7; textColor=0xFF333333; headerColor=0xFF4A6CF7; selColor=0x330078D7 });
+		win.list.show();
+		::SetWindowPos(win.list.form.hwnd, 0, listLeft, LIST_TOP, LIST_W, listHeight, 0x0010|0x0004);
+
+		//========== 状态 ==========
+		win.liveState = {
+			source = source;
+			wb = null;           //web.view 播放器对象
+			channels = {};
+			groups = {};
+			curGroupId = 0;   //0=全部
+			loading = false;
+			cmd = null;
+			channelIndex = 0; //当前播放频道在 channels 中的序号
+			cutTimer = null;  //超时切台定时器
+			playing = false;
+			pendingUrl = null; //待播放地址（等 HTML 就绪后播放）
+			cutStart = 0;
+		};
+
+		//========== 右侧浅灰背景（节目单覆盖了大部分，仅边缘绘制） ==========
+		win.onPaint = function(hdc, rcPaint, fErase, width, height){
+			import gdip;
+			var g = gdip.graphics(hdc);
+			var bg = gdip.solidBrush(0xFFF5F5F7);
+			g.fillRectangle(bg, width - MARGIN - LIST_W, 0, MARGIN + LIST_W, height);  //右侧背景（右黑边 + 节目单），随窗口尺寸
+			bg.delete();
+			g.delete();
+		};
+
+		//========== 播放器（web.view + HTML5 video） ==========
+		win.initPlayer = function(){
+			if(win.liveState.wb) return win.liveState.wb;
+			var wb;
+			try{
+				wb = web.view( win.video, null, "--disable-web-security" );
+			}catch(e){
+				win.msgboxErr( "web.view 初始化失败：" + tostring(e) );
+				return null;
+			}
+			win.liveState.wb = wb;
+			//JS -> aardio：播放状态回调（playing=已进入播放，error=播放错误，time=运行时间）
+			wb.export("onPlayerEvent", function(ev,t,d,e2){
+				if(ev == "playing"){
+					win.liveState.playing = true;
+					win.stopCutTimer();
+				}
+				//全屏：双击画面或点击 controls 全屏按钮 -> 宿主窗口真正全屏（视频铺满、隐藏节目单），退出恢复
+				else if(ev == "fs"){
+					var enabled = (t == 1 || t == "1");
+					win.fullscreenMode = enabled;
+					win.fullscreen( enabled );
+					var r = ::RECT();
+					::GetClientRect(win.hwnd, r);
+					win.reLayout( r.right - r.left, r.bottom - r.top );
+				}
+				return true;
+			});
+			//全屏：响应网页 HTML5 video 的全屏请求。全屏时让视频铺满整个屏幕（隐藏右侧节目单），退出恢复原布局
+			wb.onFullScreen = function(enabled){
+				win.fullscreenMode = !!enabled;
+				win.fullscreen( !!enabled );
+				var r = ::RECT();
+				::GetClientRect(win.hwnd, r);
+				win.reLayout( r.right - r.left, r.bottom - r.top );
+			};
+			//HTML 就绪后播放缓存的待播地址
+			wb.onDocumentInit = function(url){
+				var st = win.liveState;
+				if(st.pendingUrl){
+					var u = st.pendingUrl;
+					st.pendingUrl = null;
+					wb.invoke("playUrl", u);
+				}
+			};
+			wb.go( "/res/html/livePlayer.html" );
+			return wb;
+		};
+
+		//========== 频道分组刷新到右侧节目单（默认全部，带分组头） ==========
+		win.refreshPanel = function(){
+			win.liveState.curGroupId = 0;
+			win.list.setData( win.liveState.groups || {} );
+		};
+
+		//按分组过滤频道列表（点击节目单分组头触发）
+		win.applyGroup = function(gid){
+			var st = win.liveState;
+			st.curGroupId = gid || 0;
+			if(st.curGroupId == 0){
+				win.list.setData( st.groups || {} );   //全部（带分组头）
+			}
+			else{
+				var g = st.groups ? st.groups[st.curGroupId] : null;
+				win.list.setData( g ? { g } : {} );    //单个分组
+			}
+		};
+
+		//========== 节目单点击：分组头切换分类 / 频道切换播放 ==========
+		win.list.onSelectChange = function(channel, text, gid){
+			if(gid !== undefined){
+				win.applyGroup( gid );
+			}
+			else if(channel && channel.url){
+				win.playChannel( channel );
+			}
+		};
+
+		//========== 播放频道 ==========
+		win.playChannel = function(channel){
+			var wb = win.initPlayer();
+			if(! wb) return;
+			var st = win.liveState;
+			//记录当前频道序号
+			if(channel && st.channels){
+				for(i=1;#st.channels;1){
+					if(st.channels[i] === channel){ st.channelIndex = i; break; }
+				}
+			}
+			st.playing = false;
+			//HTML 就绪则直接播放，否则缓存待 HTML 就绪后播放
+			if( wb.$readyUrl ){
+				wb.invoke("playUrl", channel.url);
+			}
+			else{
+				st.pendingUrl = channel.url;
+			}
+			win.setStatusText( "正在播放：" + (channel.name?channel.name:"") );
+			//启动超时切台：10秒内未真正播放则自动换下一个台
+			win.startCutTimer();
+		};
+
+		//10秒超时切台：JS 回调 playing 会取消；10秒无画面则播下一频道
+		win.startCutTimer = function(){
+			var st = win.liveState;
+			if(st.cutTimer) win.clearInterval(st.cutTimer);
+			st.cutTimer = null;
+			st.cutStart = time.tick();
+			st.playing = false;
+			st.cutTimer = win.setInterval(
+				function(){
+					var st = win.liveState;
+					if(st.playing){ win.stopCutTimer(); return; }
+					if( time.tick() - st.cutStart >= 25000 ){
+						//10秒仍未播放成功，切下一个台
+						win.nextChannel();
+					}
+				}, 500
+			);
+		};
+		win.stopCutTimer = function(){
+			var st = win.liveState;
+			if(st.cutTimer){
+				win.clearInterval(st.cutTimer);
+				st.cutTimer = null;
+			}
+		};
+		win.nextChannel = function(){
+			var st = win.liveState;
+			if(! st.channels || #st.channels==0){ win.stopCutTimer(); return; }
+			var n = (st.channelIndex||0) + 1;
+			if(n > #st.channels) n = 1;
+			var ch = st.channels[n];
+			if(ch) win.playChannel(ch);
+		};
+
+		//========== 异步加载 M3U ==========
+		win.loadM3U = function(){
+			var st = win.liveState;
+			if(st.loading) return;
+			st.loading = true;
+			win.setStatusText("正在加载直播源...");
+			var hwnd = win.hwnd;
+			thread.invoke(
+				function(hwnd, sourceUrl){
+					import thread.command;
+					string.loadcode("/lib/netApi.aardio");
+					string.loadcode("/lib/m3uParser.aardio");
+					netApi = lib.netApi;
+					m3uParser = lib.m3uParser;
+					var result = null;
+					var dbg = null;
+					try{
+						var text, err, code = netApi.downloadText(sourceUrl, 20, "https://www.iyouhun.com/");
+						dbg = "len=" + (text ? #text : 0) + " err=" + tostring(err) + " code=" + tostring(code);
+						if(text) result = m3uParser.parse(text);
+					}catch(e){
+						dbg = "线程异常 " + tostring(e);
+					}
+					thread.command.post(hwnd, "onLiveM3u", result, dbg);
+				},
+				hwnd, source.url
+			);
+		};
+
+		//收到 M3U 解析结果
+		win.liveState.cmd = thread.command(win);
+		win.liveState.cmd.onLiveM3u = function(result, dbg){
+			var st = win.liveState;
+			st.loading = false;
+			if(! result || #result.channels==0){
+				win.setStatusText("源解析失败，请检查直播源地址或网络" + (dbg ? "  [" + dbg + "]" : ""));
+				return;
+			}
+			st.channels = result.channels;
+			st.groups = m3uParser.groupChannels(st.channels);
+			win.setStatusText("已加载 " + #result.channels + " 个频道");
+			//刷新右侧节目单（分类分组头 + 列表）
+			win.refreshPanel();
+			//自动播放第一条频道
+			win.playChannel( result.channels[1] );
+		};
+
+		//状态栏提示（复用窗口标题）
+		win.setStatusText = function(s){
+			win.text = "直播播放 - " + (win.liveState.source.name?win.liveState.source.name:"") + "  |  " + s;
+		};
+
+		//========== 点击检测（低级鼠标钩子）：仅右侧节目单点击 ==========
+		//说明：本环境的节目单 child wndproc 收不到 WM_LBUTTONDOWN（命中路径失效），
+		//     改用 aardio 官方 mouse.hook 低级鼠标钩子，捕获左键按下后命中节目单区域转发。
+		//左侧 web.view 视频区由 HTML5 播放器自行处理鼠标交互，不在此转发。
+		win.startClickPoll = function(){
+			import mouse.hook;
+			var mh = mouse.hook();
+			win.liveState.mouseHook = mh;
+			mh.proc = function(msg, x, y, mouseData, injected, flags, timeStamp, extraInfo){
+				if(msg != 0x201/*WM_LBUTTONDOWN*/) return;
+				var pt = ::POINT();
+				pt.x = x; pt.y = y;
+				::ScreenToClient(win.hwnd, pt);
+				var cx = pt.x; var cy = pt.y;
+				//右侧节目单（窗口可缩放，按当前窗口尺寸计算节目单区域）
+				var r = ::RECT();
+				::GetClientRect(win.hwnd, r);
+				var W = r.right - r.left;
+				var H = r.bottom - r.top;
+				var lx = W - MARGIN - LIST_W;   //当前窗口下的节目单左边界
+				var px = cx - lx;
+				var py = cy - LIST_TOP;
+				if( px >= 0 && px <= LIST_W && py >= 0 && py <= (H - LIST_TOP*2) ){
+					win.list.doClick(px, py);
+				}
+			};
+		};
+
+				//======== 窗口缩放（不锁定尺寸） =========
+		//拖动窗口 -> 视频随窗口等比缩放（HTML5 video 画面自动保持比例），
+		//右侧节目单宽度固定（LIST_W），高度跟随窗口高度。
+		win.onSize = function(cx,cy){
+			if(cx < 700 || cy < 420) return;   //过小时跳过重排，避免控件尺寸异常
+			win.reLayout(cx,cy);
+		};
+		//按当前窗口尺寸重排：视频区（左右各 MARGIN 黑边）+ 右侧固定宽节目单
+		win.reLayout = function(W,H){
+			//全屏模式：视频铺满整个客户区，隐藏右侧节目单
+			if(win.fullscreenMode){
+				win.video.setRect( ::RECT(0, 0, W, H) );
+				win.list.form.show(false);   //隐藏右侧节目单
+				return;
+			}
+			var M=MARGIN, LW=LIST_W, G=LIST_GAP, T=LIST_TOP;
+			win.video.setRect( ::RECT(M, 0, W-M-LW-G, H) );   //视频：左右各留 M 黑边，宽度/高度随窗口
+			::SetWindowPos(win.list.form.hwnd, 0, W-M-LW, T, LW, H-T*2, 0x0010|0x0004);  //节目单：宽固定 LW，高随窗口
+			win.list.form.show(true);    //恢复显示右侧节目单
+			win.list.form.invalidate();
+		};
+
+		//关闭：释放鼠标钩子、定时器、web.view 播放器
+		win.onClose = function(){
+			win.stopCutTimer();
+			if(win.liveState.mouseHook) win.liveState.mouseHook.close();
+			win.liveState.mouseHook = null;
+			if(win.liveState.wb){
+				win.liveState.wb = null;  //web.view 在 _onDestroy 中自动销毁浏览器
+			}
+		};
+
+		win.show();
+		win.startClickPoll();
+		win.loadM3U();
+		return win;
+	};
+}
+forms = forms or {};
+forms.livePlay = livePlay;

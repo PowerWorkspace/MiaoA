@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>player</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden;}
+#v{position:absolute;left:0;top:0;width:100%;height:100%;background:#000;}
+</style>
+</head>
+<body>
+<video id="v" controls autoplay playsinline webkitallowfullscreen mozallowfullscreen allowfullscreen></video>
+<script src="hls.min.js"></script>
+<script>
+var video = document.getElementById('v');
+
+// 双击画面切换全屏：直接通知 aardio，由宿主窗口真正全屏（视频铺满整个屏幕）
+video.addEventListener('dblclick', function(){ toggleFull(); });
+window.toggleFull = function(){
+    if(window.onPlayerEvent){ try{ void onPlayerEvent('fs', 1); }catch(e){} }
+};
+
+// controls 全屏按钮 / video.requestFullscreen() 触发全屏变化：通知 aardio 切换宿主窗口全屏
+document.addEventListener('fullscreenchange', function(){
+    if(window.onPlayerEvent){ try{ void onPlayerEvent('fs', document.fullscreenElement?1:0); }catch(e){} }
+});
+
+// aardio 调用此函数切换播放地址
+window.playUrl = function(url){
+    try{ if(video._hls){ video._hls.destroy(); video._hls=null; } }catch(e){}
+    try{ video.pause(); }catch(e){}
+    try{ video.removeAttribute('src'); video.load(); }catch(e){}
+    if(Hls.isSupported()){
+        var hls = new Hls({ enableWorker:true, maxBufferLength:20 });
+        video._hls = hls;
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function(){ try{ video.play(); }catch(e){} });
+        hls.on(Hls.Events.ERROR, function(e,d){
+            if(d && d.fatal){
+                if(d.type===Hls.ErrorTypes.NETWORK_ERROR){ hls.startLoad(); }
+                else if(d.type===Hls.ErrorTypes.MEDIA_ERROR){ hls.recoverMediaError(); }
+                else { try{ hls.destroy(); }catch(err){} }
+                if(window.onPlayerEvent){ try{ void onPlayerEvent('error', (d&&d.details)||'', (d&&d.type)||'', (d&&d.url)||''); }catch(e){} }
+            }
+        });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url; try{ video.play(); }catch(e){}
+    } else {
+        video.src = url; try{ video.play(); }catch(e){}
+    }
+};
+
+// 通知 aardio：进入播放（用于取消超时切台）
+video.addEventListener('playing', function(){
+    if(window.onPlayerEvent){ try{ void onPlayerEvent('playing'); }catch(e){} }
+});
+// 通知 aardio：播放错误（用于超时切台）
+video.addEventListener('error', function(){
+    if(window.onPlayerEvent){ try{ void onPlayerEvent('error'); }catch(e){} }
+});
+// 周期性上报播放位置与总时长（运行时间）
+video.addEventListener('timeupdate', function(){
+    if(window.onPlayerEvent){
+        var t = isFinite(video.currentTime)?video.currentTime:0;
+        var d = (isFinite(video.duration)&&video.duration>0)?video.duration:0;
+        try{ void onPlayerEvent('time', t, d); }catch(e){}
+    }
+});
+</script>
+</body>
+</html>

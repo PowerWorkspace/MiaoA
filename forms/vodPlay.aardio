@@ -1,0 +1,98 @@
+//forms/vodPlay.aardio  点播播放窗口
+//播放器方案：web.view（Edge WebView2）嵌入 HTML5 <video>，用 hls.js 播放 m3u8 点播流
+//   HTML5 video 原生 controls 提供：播放/暂停、音量、全屏、进度条、运行时间（点播有固定时长可拖动进度）
+import win.ui;
+import web.view;
+import wsock.tcp.asyncHttpServer;   //web.view 用本地 HTTP 服务器打开工程内 html 及其资源
+
+vodPlay = {
+	lastWin = null;  //当前点播播放窗口（预先声明，运行时只改值不新增字段）
+
+	//打开点播播放窗口
+	//title:窗口标题；url:真实播放地址；vodConfig:{liveSource=..; vodSource=..}
+	open = function(title, url, vodConfig){
+		import thread.command;
+			//确保单一播放窗口：若已有播放窗口则先关闭（列表点击重复触发 open 时，不残留多个窗口）
+			if(vodPlay.lastWin && vodPlay.lastWin.hwnd){
+				try{ if(win.isWindow(vodPlay.lastWin.hwnd)) vodPlay.lastWin.close(); }catch(e){}
+				vodPlay.lastWin = null;
+			}
+
+		var win = win.form({
+			text = title ? title : "点播播放";
+			right = 960;
+			bottom = 600;
+			bgcolor = 0x000000;
+			min = 640;
+			max = 480;
+		});
+		win.add(
+			video = { cls="custom"; left=0; top=0; right=960; bottom=600; bgcolor=0; db=1;dl=1;dr=1;dt=1; z=1 }
+		);
+
+		win.vodState = {
+			wb = null;         //web.view 播放器对象
+			pendingUrl = null; //待播放地址（等 HTML 就绪后播放）
+		};
+
+		//播放器（web.view + HTML5 video + hls.js）
+		win.initPlayer = function(){
+			if(win.vodState.wb) return win.vodState.wb;
+			var wb;
+			try{
+				wb = web.view( win.video, null, "--disable-web-security" );
+			}catch(e){
+				win.msgboxErr( "web.view 初始化失败：" + tostring(e) );
+				return null;
+			}
+			win.vodState.wb = wb;
+			//全屏：响应网页 HTML5 video 的全屏请求，让宿主窗口真正全屏
+			wb.onFullScreen = function(enabled){
+				win.fullscreen( !!enabled );
+			};
+			//HTML 就绪后播放缓存的待播地址
+			wb.onDocumentInit = function(){
+				var st = win.vodState;
+				if(st.pendingUrl){
+					var u = st.pendingUrl;
+					st.pendingUrl = null;
+					wb.invoke("playUrl", u);
+				}
+			};
+			wb.go( "/res/html/livePlayer.html" );
+			return wb;
+		};
+
+		//窗口缩放：视频区随窗口
+		win.onSize = function(cx,cy){
+			win.video.setRect( ::RECT(0,0,cx,cy) );
+		};
+
+		//关闭：释放 web.view 播放器
+		win.onClose = function(){
+			if(win.vodState.wb){
+				win.vodState.wb = null;  //web.view 在 _onDestroy 中自动销毁浏览器
+			}
+		};
+
+		//播放指定地址（hls.js 播放 m3u8）
+		win.play = function(playUrl){
+			var wb = win.initPlayer();
+			if(! wb) return;
+			if( wb.$readyUrl ){
+				wb.invoke("playUrl", playUrl);
+			}
+			else{
+				win.vodState.pendingUrl = playUrl;
+			}
+		};
+
+		win.show();
+		if(url) win.play(url);
+		vodPlay.lastWin = win;
+		return win;
+	};
+}
+
+forms = forms or {};
+forms.vodPlay = vodPlay;
