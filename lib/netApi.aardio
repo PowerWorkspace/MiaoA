@@ -111,8 +111,7 @@ netApi = {
 	startWeather = function(hwnd){
 		thread.invoke(function(hwnd){
 			import thread.command;
-			string.loadcode("/lib/netApi.aardio");
-			netApi = lib.netApi;
+			import netApi;   //发布后库已内嵌编译进 exe，用 import 加载（string.loadcode 在发布版读不到源码）
 			var data = null;
 			try{
 				var loc = netApi.getIPLocation();
@@ -132,8 +131,7 @@ netApi = {
 	startHistory = function(hwnd){
 		thread.invoke(function(hwnd){
 			import thread.command;
-			string.loadcode("/lib/netApi.aardio");
-			netApi = lib.netApi;
+			import netApi;   //同上：发布后用 import 从内嵌库加载
 			var data = null;
 			try{
 				data = netApi.getHistory();

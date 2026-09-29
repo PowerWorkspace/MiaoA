@@ -15,6 +15,7 @@ import customGridList;
 import customCateBar;
 
 //============== 加载工程代码文件（forms\ 下）：发布时作为独立 .aardio 复制到发布目录，用相对路径加载 ===============
+//加载工程代码文件（forms\ 下）：发布时复制到发布目录 forms\ 文件夹，exe 与 forms\ 需一起拷贝
 string.loadcode("/forms/livePlay.aardio");
 string.loadcode("/forms/vodPlay.aardio");
 string.loadcode("/forms/tvboxIndex.aardio");
@@ -33,7 +34,7 @@ customCateBar = lib.customCateBar;
 var cfg = configMgr.load();
 
 var winform = win.form({
-	text = "直播点播播放器";
+	text = "妙啊播放器";
 	right = 900;
 	bottom = 560;
 	bgcolor = 0xFFFFFF;
@@ -97,7 +98,14 @@ winform.startClock = function(){
 };
 winform.updateClock = function(){
 	var now = time();
-	winform.lbClock.text = string.format("%02d:%02d:%02d", now.hour, now.minute, now.second);
+	//手动补零：0点/0分/0秒 显示为 00，而不是 0
+	var hh = now.hour;
+	var mm = now.minute;
+	var ss = now.second;
+	if(hh<10) hh = "0"+hh; else hh = ""+hh;
+	if(mm<10) mm = "0"+mm; else mm = ""+mm;
+	if(ss<10) ss = "0"+ss; else ss = ""+ss;
+	winform.lbClock.text = hh+":"+mm+":"+ss;
 	winform.lbClock.invalidate();
 	var weekNames = {"日","一","二","三","四","五","六"}; //星期数组（dayofweek 0-6，0=周日）
 	winform.lbDate.text = string.format("%d年%d月%d日 星期%s", now.year, now.month, now.day, weekNames[now.dayofweek+1] );
@@ -132,7 +140,9 @@ for(i=1;5;1){
 		btn.text = liveSources[i] ? liveSources[i].name : ("直播源"+i);
 		var li = i;
 		btn.oncommand = function(id,event){
-			forms.livePlay.open( winform.app.config.liveSource[li] );
+			var src = winform.app.config.liveSource[li];
+			if( ! src || src.url == "" || #src.url == 0 ){ winform.msgbox("请设置地址源"); return; }
+			forms.livePlay.open( src );
 		};
 	}
 }
@@ -145,7 +155,9 @@ for(i=1;5;1){
 		btn.text = vodSources[i] ? vodSources[i].name : ("点播源"+i);
 		var idx = i;
 		btn.oncommand = function(id,event){
-			forms.tvboxIndex.open( winform.app.config.vodSource[idx], winform.app.config );
+			var src = winform.app.config.vodSource[idx];
+			if( ! src || src.url == "" || #src.url == 0 ){ winform.msgbox("请设置地址源"); return; }
+			forms.tvboxIndex.open( src, winform.app.config );
 		};
 	}
 }
