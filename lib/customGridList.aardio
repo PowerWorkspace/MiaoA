@@ -69,8 +69,7 @@ customGridList = {
 				var it = pending[k];
 				thread.invoke(function(hwnd, url){
 					import thread.command;
-					string.loadcode("/lib/netApi.aardio");
-					netApi = lib.netApi;
+					import netApi;
 					var data = null;
 					try{ data = netApi.downloadBinary(url); }catch(e){ data = null; }
 					thread.command.post(hwnd, "onGridPic", { url = url; data = data });

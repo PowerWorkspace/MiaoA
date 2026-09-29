@@ -7,8 +7,8 @@ import win.ui;
 import web.view;
 import wsock.tcp.asyncHttpServer;   //web.view 用本地 HTTP 服务器打开工程内 html 及其资源
 var _formCtor = win.form;  //保存窗体构造函数，供创建子窗口
-string.loadcode("/lib/customProgramList.aardio");
-string.loadcode("/lib/m3uParser.aardio");
+import customProgramList;
+import m3uParser;
 livePlay = {
 	//打开直播播放窗口
 	//source: {name,url}
@@ -219,10 +219,8 @@ livePlay = {
 			thread.invoke(
 				function(hwnd, sourceUrl){
 					import thread.command;
-					string.loadcode("/lib/netApi.aardio");
-					string.loadcode("/lib/m3uParser.aardio");
-					netApi = lib.netApi;
-					m3uParser = lib.m3uParser;
+					import netApi;
+					import m3uParser;
 					var result = null;
 					var dbg = null;
 					try{

@@ -265,10 +265,8 @@ tvboxIndex = {
 			thread.invoke(
 				function(hwnd, base){
 					import thread.command;
-					string.loadcode("/lib/netApi.aardio");
-					string.loadcode("/lib/tvboxApi.aardio");
-					netApi = lib.netApi;
-					tvboxApi = lib.tvboxApi;
+					import netApi;
+					import tvboxApi;
 					var r = null;
 					try{ r = tvboxApi.getCategories(base); }catch(e){ r = null; }
 					thread.command.post(hwnd, "onTvCates", r);
@@ -282,10 +280,8 @@ tvboxIndex = {
 			thread.invoke(
 				function(hwnd, base, cateId, wd, page){
 					import thread.command;
-					string.loadcode("/lib/netApi.aardio");
-					string.loadcode("/lib/tvboxApi.aardio");
-					netApi = lib.netApi;
-					tvboxApi = lib.tvboxApi;
+					import netApi;
+					import tvboxApi;
 					var r = null;
 					try{ r = tvboxApi.getVodList(base, cateId, wd, page); }catch(e){ r = null; }
 					thread.command.post(hwnd, "onTvVods", r);
@@ -299,10 +295,8 @@ tvboxIndex = {
 			thread.invoke(
 				function(hwnd, base, cateId, wd, page){
 					import thread.command;
-					string.loadcode("/lib/netApi.aardio");
-					string.loadcode("/lib/tvboxApi.aardio");
-					netApi = lib.netApi;
-					tvboxApi = lib.tvboxApi;
+					import netApi;
+					import tvboxApi;
 					var r = null;
 					try{ r = tvboxApi.getVodList(base, cateId, wd, page); }catch(e){ r = null; }
 					thread.command.post(hwnd, "onTvVodsMore", r);
@@ -316,10 +310,8 @@ tvboxIndex = {
 			thread.invoke(
 				function(hwnd, base, vodId){
 					import thread.command;
-					string.loadcode("/lib/netApi.aardio");
-					string.loadcode("/lib/tvboxApi.aardio");
-					netApi = lib.netApi;
-					tvboxApi = lib.tvboxApi;
+					import netApi;
+					import tvboxApi;
 					var r = null;
 					try{ r = tvboxApi.getDetail(base, vodId); }catch(e){ r = null; }
 					thread.command.post(hwnd, "onTvDetail", r);
@@ -422,8 +414,7 @@ tvboxIndex = {
 			var hwnd = win.hwnd;
 			thread.invoke(function(hwnd, url){
 				import thread.command;
-				string.loadcode("/lib/netApi.aardio");
-				netApi = lib.netApi;
+				import netApi;
 				var data = null;
 				try{ data = netApi.downloadBinary(url); }catch(e){ data = null; }
 				thread.command.post(hwnd, "onPoster", { url=url; data=data });

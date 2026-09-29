@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<project ver="10" name="妙啊播放器" icon="res\logo.ico" ui="win" output="妙啊播放器.exe" libEmbed="true" CompanyName="PowerStudio" FileDescription="妙啊播放器" ProductName="妙啊播放器" dstrip="false" LegalCopyright="Copyright (C) Power 2026" InternalName="妙啊播放器" FileVersion="0.0.1.5" ProductVersion="0.0.1.5" publishDir="/Publish/">
+<project ver="10" name="妙啊播放器" icon="res\logo.ico" ui="win" output="妙啊播放器.exe" libEmbed="true" CompanyName="PowerStudio" FileDescription="妙啊播放器" ProductName="妙啊播放器" dstrip="false" LegalCopyright="Copyright (C) Power 2026" InternalName="妙啊播放器" FileVersion="0.0.1.6" ProductVersion="0.0.1.6" publishDir="/Publish/">
 	<file name="main.aardio" path="main.aardio"/>
 	<folder name="forms" path="forms" embed="true" local="false" ignored="false">
 		<file name="livePlay.aardio" path="forms\livePlay.aardio" comment="forms\livePlay.aardio"/>
