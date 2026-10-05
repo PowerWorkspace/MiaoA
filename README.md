@@ -88,6 +88,15 @@ MiaoA/
         └── hls.min.js              hls.js 播放库
 ```
 
+## 仓库与同步
+
+| 平台 | 地址 | 说明 |
+| --- | --- | --- |
+| Gitee（主仓） | https://gitee.com/powerclub/MiaoA | 主开发仓库，代码提交都在这里 |
+| GitHub（镜像） | https://github.com/PowerWorkspace/MiaoA | 自动同步的镜像仓库 |
+
+同步方式：GitHub 侧由 `.github/workflows/sync-from-gitee.yml` 定时（每小时）从 Gitee 全量镜像分支与标签；也可在 GitHub 仓库的 **Actions → 同步 Gitee → GitHub → Run workflow** 手动立即同步。本地开发提交后执行 `git push` 即同时推送到两个平台。
+
 ## 下载
 
 前往 [发行版页面](https://gitee.com/powerclub/MiaoA/releases) 下载最新的 `妙啊播放器.exe`，双击即可运行。

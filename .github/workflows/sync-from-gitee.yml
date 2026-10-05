@@ -1,0 +1,45 @@
+name: 同步 Gitee → GitHub
+
+# 说明：
+#   Gitee 仓库  https://gitee.com/powerclub/MiaoA  为公开仓库，
+#   因此本工作流无需任何令牌即可拉取；推送使用 Actions 自带的 GITHUB_TOKEN。
+#   触发方式：每小时的第 23 分钟自动执行一次，也可在 Actions 页面手动 Run workflow。
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gitee-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出 GitHub 仓库（含全部历史）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 从 Gitee 镜像拉取并推送
+        env:
+          GITEE_REPO: https://gitee.com/powerclub/MiaoA.git
+        run: |
+          set -e
+          git config user.name  "gitee-mirror[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 拉取 Gitee 全部分支与标签（--prune 同步删除）
+          git fetch --prune --force "$GITEE_REPO" \
+            '+refs/heads/*:refs/heads/*' \
+            '+refs/tags/*:refs/tags/*'
+          # 原样推送到 GitHub（含删除同步），历史保持一致
+          git push --force --prune origin \
+            '+refs/heads/*:refs/heads/*' \
+            '+refs/tags/*:refs/tags/*'
+          echo "同步完成，当前 HEAD:"
+          git log --oneline -1
