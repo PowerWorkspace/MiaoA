@@ -95,11 +95,6 @@ MiaoA/
 | Gitee（主仓） | https://gitee.com/powerclub/MiaoA | 主开发仓库，代码提交都在这里 |
 | GitHub（镜像） | https://github.com/PowerWorkspace/MiaoA | 自动同步的镜像仓库 |
 
-同步机制（三选一即可，推荐第 1 种）：
-
-1. **Gitee 官方镜像（推荐，服务端自动同步）**：Gitee 仓库 →「管理」→「仓库镜像管理」→ 添加镜像 → 方向选 **Push**、镜像仓库选 GitHub 上的 `MiaoA`、个人令牌填 GitHub PAT（需 `repo` 权限）。配置后往 Gitee 提交即自动同步到 GitHub（最短间隔 5 分钟）。
-2. **本地双推**：本仓库的 `origin` 已同时绑定 Gitee 与 GitHub 两个推送地址，本地执行 `git push` 一次即推到两边；另有 `sync-miaoa-github.bat`（配合 Windows 计划任务每小时执行）做无人值守同步。
-3. **GitHub Actions 兜底**：`.github/workflows/sync-from-gitee.yml` 定时从 Gitee 拉取并镜像。注意 GitHub 托管机房经常连不上 Gitee，连不上时会自动跳过，不作为主同步手段。
 
 ## 下载
 
@@ -118,8 +113,8 @@ MiaoA/
 ## 许可证
 
 MIT License
-![输入图片说明](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE1.png)
-![输入图片说明](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE2.png)
-![输入图片说明](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE3.png)
-![输入图片说明](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE4.png)
-![输入图片说明](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE5.png)
+![软件首页](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE1.png)
+![软件设置](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE2.png)
+![直播播放](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE3.png)
+![点播目录](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE4.png)
+![点播播放](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE5.png)
