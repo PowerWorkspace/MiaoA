@@ -33,10 +33,23 @@ jobs:
           set -e
           git config user.name  "gitee-mirror[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # 拉取 Gitee 全部分支与标签（--prune 同步删除）
-          git fetch --prune --force "$GITEE_REPO" \
-            '+refs/heads/*:refs/heads/*' \
-            '+refs/tags/*:refs/tags/*'
+
+          # GitHub 托管机房经常连不上 Gitee，失败重试 3 次仍不通则跳过（不算失败）
+          ok=0
+          for i in 1 2 3; do
+            if git fetch --prune --force "$GITEE_REPO" \
+                 '+refs/heads/*:refs/heads/*' \
+                 '+refs/tags/*:refs/tags/*'; then
+              ok=1; break
+            fi
+            echo "第 $i 次拉取 Gitee 失败，30 秒后重试"
+            sleep 30
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::warning::GitHub Actions 所在网络无法访问 Gitee（机房 IP 常被拦截），本次跳过。日常同步请以本地脚本 / git push 为准。"
+            exit 0
+          fi
+
           # 原样推送到 GitHub（含删除同步），历史保持一致
           git push --force --prune origin \
             '+refs/heads/*:refs/heads/*' \
