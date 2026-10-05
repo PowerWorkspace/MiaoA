@@ -95,7 +95,11 @@ MiaoA/
 | Gitee（主仓） | https://gitee.com/powerclub/MiaoA | 主开发仓库，代码提交都在这里 |
 | GitHub（镜像） | https://github.com/PowerWorkspace/MiaoA | 自动同步的镜像仓库 |
 
-同步方式：GitHub 侧由 `.github/workflows/sync-from-gitee.yml` 定时（每小时）从 Gitee 全量镜像分支与标签；也可在 GitHub 仓库的 **Actions → 同步 Gitee → GitHub → Run workflow** 手动立即同步。本地开发提交后执行 `git push` 即同时推送到两个平台。
+同步机制（三选一即可，推荐第 1 种）：
+
+1. **Gitee 官方镜像（推荐，服务端自动同步）**：Gitee 仓库 →「管理」→「仓库镜像管理」→ 添加镜像 → 方向选 **Push**、镜像仓库选 GitHub 上的 `MiaoA`、个人令牌填 GitHub PAT（需 `repo` 权限）。配置后往 Gitee 提交即自动同步到 GitHub（最短间隔 5 分钟）。
+2. **本地双推**：本仓库的 `origin` 已同时绑定 Gitee 与 GitHub 两个推送地址，本地执行 `git push` 一次即推到两边；另有 `sync-miaoa-github.bat`（配合 Windows 计划任务每小时执行）做无人值守同步。
+3. **GitHub Actions 兜底**：`.github/workflows/sync-from-gitee.yml` 定时从 Gitee 拉取并镜像。注意 GitHub 托管机房经常连不上 Gitee，连不上时会自动跳过，不作为主同步手段。
 
 ## 下载
 
