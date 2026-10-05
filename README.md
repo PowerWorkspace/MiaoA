@@ -118,3 +118,8 @@ MiaoA/
 ## 许可证
 
 MIT License
+![软件首页](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE1.png)
+![软件设置](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE2.png)
+![直播播放](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE3.png)
+![点播目录](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE4.png)
+![点播播放](res/%E7%A7%92%E5%95%8A%E6%92%AD%E6%94%BE%E5%99%A8%E6%88%AA%E5%9B%BE5.png)
